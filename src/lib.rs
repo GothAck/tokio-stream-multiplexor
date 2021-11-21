@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     io,
     sync::{
-        atomic::{AtomicU32, Ordering},
+        atomic::{AtomicBool, AtomicU32, Ordering},
         Arc,
     },
 };
@@ -42,6 +42,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
         let (send, recv) = mpsc::channel(10);
         let inner = Arc::from(StreamMultiplexorInner {
             config,
+            connected: AtomicBool::from(true),
             port_connections: RwLock::from(HashMap::new()),
             port_listeners: RwLock::from(HashMap::new()),
             send: RwLock::from(send),
@@ -53,8 +54,9 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             loop {
                 let frame = match recv.recv().await {
                     Some(v) => v,
-                    _ => {
-                        return;
+                    error => {
+                        error!("Error {:?} reading from stream", error);
+                        break;
                     }
                 };
                 if let Err(error) = framed_writer.send(frame).await {
@@ -70,8 +72,21 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             loop {
                 let frame: Frame = match framed_reader.next().await {
                     Some(Ok(v)) => v,
-                    _ => {
-                        return;
+                    error => {
+                        error!("Error {:?} reading from framed_reader", error);
+
+                        inner_clone.connected.store(false, Ordering::Relaxed);
+
+                        for (_, connection) in inner_clone.port_connections.write().await.drain() {
+                            if let Some(sender) = connection.external_stream_sender.write().await.as_ref() {
+                                if let Err(error) = sender.send(Err(io::Error::from(io::ErrorKind::BrokenPipe))).await {
+                                    error!("Error {:?} dropping port_connections", error);
+                                }
+                            }
+                        }
+                        inner_clone.port_listeners.write().await.clear();
+
+                        break;
                     }
                 };
                 if matches!(frame.flag, Flag::Syn)
@@ -112,6 +127,9 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
     }
 
     pub async fn bind(&self, port: u16) -> Result<MuxListener<T>> {
+        if !self.inner.connected.load(Ordering::Relaxed) {
+            return Err(io::Error::from(io::ErrorKind::ConnectionReset));
+        }
         let mut port = port;
         if port == 0 {
             while port < 1024 || self.inner.port_listeners.read().await.contains_key(&port) {
@@ -130,6 +148,9 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
     }
 
     pub async fn connect(&self, port: u16) -> Result<DuplexStream> {
+        if !self.inner.connected.load(Ordering::Relaxed) {
+            return Err(io::Error::from(io::ErrorKind::ConnectionReset));
+        }
         let mut local_port = 0;
         while local_port < 1024
             || self
@@ -143,7 +164,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
         }
 
         let mux_socket = MuxSocket::new(self.inner.clone(), local_port, port, false);
-        let rx = mux_socket.stream().await;
+        let mut rx = mux_socket.stream().await;
         self.inner
             .port_connections
             .write()
@@ -153,7 +174,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
 
         rx.recv()
             .await
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?
+            .ok_or(io::Error::from(io::ErrorKind::Other))?
     }
 }
 
@@ -170,6 +191,7 @@ type PortPair = (u16, u16);
 #[derive(Debug)]
 struct StreamMultiplexorInner<T> {
     config: Config,
+    connected: AtomicBool,
     port_connections: RwLock<HashMap<PortPair, Arc<MuxSocket<T>>>>,
     port_listeners: RwLock<HashMap<u16, async_channel::Sender<DuplexStream>>>,
     send: RwLock<mpsc::Sender<Frame>>,
@@ -183,8 +205,8 @@ pub struct MuxListener<T> {
 }
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxListener<T> {
-    pub async fn accept(&self) -> Option<DuplexStream> {
-        self.recv.recv().await.ok()
+    pub async fn accept(&self) -> Result<DuplexStream> {
+        Ok(self.recv.recv().await.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?)
     }
 }
 
@@ -197,7 +219,7 @@ struct MuxSocket<T> {
     state: RwLock<PortState>,
     seq: AtomicU32,
     write_half: RwLock<Option<WriteHalf<DuplexStream>>>,
-    external_stream_sender: RwLock<Option<async_channel::Sender<Result<DuplexStream>>>>,
+    external_stream_sender: RwLock<Option<mpsc::Sender<Result<DuplexStream>>>>,
 }
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
@@ -219,8 +241,8 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
         })
     }
 
-    pub async fn stream(self: &Arc<Self>) -> async_channel::Receiver<Result<DuplexStream>> {
-        let (sender, receiver) = async_channel::bounded(1);
+    pub async fn stream(self: &Arc<Self>) -> mpsc::Receiver<Result<DuplexStream>> {
+        let (sender, receiver) = mpsc::channel(1);
         *self.external_stream_sender.write().await = Some(sender);
         receiver
     }
@@ -453,7 +475,7 @@ async fn dropped_connection_rsts() {
     let sm_b = StreamMultiplexor::new(b, Config::default());
 
     tokio::spawn(async move {
-        sm_b.bind(22).await.unwrap().accept().await;
+        sm_b.bind(22).await.unwrap().accept().await.unwrap();
     });
 
     assert!(matches!(sm_a.connect(22).await, Ok(_)));
@@ -490,4 +512,45 @@ async fn connected_stream_passes_data() {
     }
 
     assert_eq!(input_bytes, output_bytes);
+}
+
+#[tokio::test]
+async fn wrapped_stream_disconnect() {
+    use tokio::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        listener.accept().await.unwrap();
+    });
+
+    let stream = TcpStream::connect(local_addr).await.unwrap();
+
+    let sm_a = StreamMultiplexor::new(stream, Config::default());
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    assert!(matches!(sm_a.connect(1024).await, Err(..)));
+    assert!(matches!(sm_a.bind(1024).await, Err(..)));
+}
+
+#[tokio::test]
+async fn wrapped_stream_disconnect_listener() {
+    use tokio::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        let _ = listener.accept().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    });
+
+    let stream = TcpStream::connect(local_addr).await.unwrap();
+    let sm_a = StreamMultiplexor::new(stream, Config::default());
+    let listener = sm_a.bind(1024).await.unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    assert!(matches!(listener.accept().await, Err(..)));
 }
