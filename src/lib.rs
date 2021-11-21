@@ -414,6 +414,12 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
     }
 }
 
+#[cfg(test)]
+#[ctor::ctor]
+fn init_tests() {
+    tracing_subscriber::fmt::init();
+}
+
 #[tokio::test]
 async fn connect_no_listen_fails() {
     let (a, b) = duplex(10);
