@@ -1,6 +1,9 @@
 [package]
 name = "tokio-stream-multiplexor"
 version = "0.1.0"
+authors = ["Greg \"GothAck\" Miell <rust@greg.gothack.ninja>"]
+description = "Stream Multiplexor for tokio with a tcp like interface"
+license = "MIT"
 edition = "2021"
 
 [dependencies]
