@@ -311,23 +311,25 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
     pub async fn recv_frame(self: &Arc<Self>, frame: Frame) {
         let state: PortState = *self.state.read().await;
         match frame.flag {
-            Flag::Syn => if let PortState::Closed = state {
-                if let Err(error) = self
-                    .inner
-                    .send
-                    .write()
-                    .await
-                    .send(Frame::new_reply(
-                        &frame,
-                        Flag::SynAck,
-                        self.seq.fetch_add(1, Ordering::Relaxed),
-                    ))
-                    .await
-                {
-                    error!("Error {:?} sending SynAck", error);
+            Flag::Syn => {
+                if let PortState::Closed = state {
+                    if let Err(error) = self
+                        .inner
+                        .send
+                        .write()
+                        .await
+                        .send(Frame::new_reply(
+                            &frame,
+                            Flag::SynAck,
+                            self.seq.fetch_add(1, Ordering::Relaxed),
+                        ))
+                        .await
+                    {
+                        error!("Error {:?} sending SynAck", error);
+                    }
+                    *self.state.write().await = PortState::SynAck;
                 }
-                *self.state.write().await = PortState::SynAck;
-            },
+            }
             Flag::SynAck | Flag::Ack => match state {
                 PortState::SynAck | PortState::Ack => {
                     if let Err(error) = self
@@ -354,7 +356,8 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                                 error!("Error {:?} sending DuplexStream to acceptor", error);
                             }
                         }
-                    } else if let Some(sender) = self.external_stream_sender.write().await.as_ref() {
+                    } else if let Some(sender) = self.external_stream_sender.write().await.as_ref()
+                    {
                         let stream = self.spawn_stream().await;
                         if let Err(error) = sender.send(Ok(stream)).await {
                             error!("Error {:?} sending DuplexStream to connector", error);
@@ -363,38 +366,38 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                 }
                 _ => {}
             },
-            Flag::Unset => if let PortState::Open = state {
-                if let Some(write_half) = self.write_half.write().await.as_mut() {
-                    if let Err(error) = write_half.write_all(&frame.data).await {
-                        error!("Error {:?} writing data to write_half", error);
+            Flag::Unset => {
+                if let PortState::Open = state {
+                    if let Some(write_half) = self.write_half.write().await.as_mut() {
+                        if let Err(error) = write_half.write_all(&frame.data).await {
+                            error!("Error {:?} writing data to write_half", error);
+                        }
                     }
                 }
-            },
-            Flag::Fin => if let PortState::Open = state {
-                if let Err(error) = self
-                    .inner
-                    .send
-                    .write()
-                    .await
-                    .send(Frame::new_reply(
-                        &frame,
-                        Flag::Fin,
-                        self.seq.fetch_add(1, Ordering::Relaxed),
-                    ))
-                    .await
-                {
-                    error!("Error {:?} sending Fin", error);
-                }
-                *self.state.write().await = PortState::Closed;
-                *self.write_half.write().await = None;
-            },
-            Flag::Rst => {
-                if matches!(*self.state.read().await, PortState::Closed | PortState::Ack) {
-                    if let Some(stream_sender) = self
-                        .external_stream_sender
+            }
+            Flag::Fin => {
+                if let PortState::Open = state {
+                    if let Err(error) = self
+                        .inner
+                        .send
                         .write()
                         .await
-                        .as_ref()
+                        .send(Frame::new_reply(
+                            &frame,
+                            Flag::Fin,
+                            self.seq.fetch_add(1, Ordering::Relaxed),
+                        ))
+                        .await
+                    {
+                        error!("Error {:?} sending Fin", error);
+                    }
+                    *self.state.write().await = PortState::Closed;
+                    *self.write_half.write().await = None;
+                }
+            }
+            Flag::Rst => {
+                if matches!(*self.state.read().await, PortState::Closed | PortState::Ack) {
+                    if let Some(stream_sender) = self.external_stream_sender.write().await.as_ref()
                     {
                         if let Err(error) = stream_sender
                             .send(Err(io::Error::from(io::ErrorKind::AddrNotAvailable)))

@@ -110,15 +110,23 @@ async fn mux_handshake() {
 pub fn throughput(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput");
     group.throughput(Throughput::Bytes((PAYLOAD_SIZE * SEND_ROUND) as u64));
-    group.bench_function("tcp", |b| b.to_async(Runtime::new().unwrap()).iter(|| tcp_throughput()));
-    group.bench_function("mux", |b| b.to_async(Runtime::new().unwrap()).iter(|| mux_throughput()));
+    group.bench_function("tcp", |b| {
+        b.to_async(Runtime::new().unwrap())
+            .iter(|| tcp_throughput())
+    });
+    group.bench_function("mux", |b| {
+        b.to_async(Runtime::new().unwrap())
+            .iter(|| mux_throughput())
+    });
     group.finish();
 }
 
 pub fn handshake(c: &mut Criterion) {
     let mut group = c.benchmark_group("handshake");
     group.throughput(Throughput::Elements(HANDSHAKE_ROUND as u64));
-    group.bench_function("mux", |b| b.to_async(Runtime::new().unwrap()).iter(|| mux_handshake()));
+    group.bench_function("mux", |b| {
+        b.to_async(Runtime::new().unwrap()).iter(|| mux_handshake())
+    });
     group.finish();
 }
 
