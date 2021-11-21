@@ -400,16 +400,18 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
             },
             Flag::Rst => {
                 if matches!(*self.state.read().await, PortState::Closed | PortState::Ack) {
-                    if let Err(error) = self
+                    if let Some(stream_sender) = self
                         .external_stream_sender
                         .write()
                         .await
                         .as_ref()
-                        .unwrap()
-                        .send(Err(io::Error::from(io::ErrorKind::AddrNotAvailable)))
-                        .await
                     {
-                        error!("Error {:?} sending Error to connection", error);
+                        if let Err(error) = stream_sender
+                            .send(Err(io::Error::from(io::ErrorKind::AddrNotAvailable)))
+                            .await
+                        {
+                            error!("Error {:?} sending Error to connection", error);
+                        }
                     }
                 }
                 *self.state.write().await = PortState::Closed;
