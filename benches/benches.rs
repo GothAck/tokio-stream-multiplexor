@@ -3,7 +3,7 @@ use tokio_stream_multiplexor::{Config, DuplexStream, StreamMultiplexor};
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use std::sync::Arc;
 use tokio::{
-    io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
+    io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     runtime::Runtime,
     sync::mpsc,
