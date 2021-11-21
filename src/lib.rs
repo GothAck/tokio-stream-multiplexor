@@ -10,7 +10,7 @@ use std::{
     },
 };
 
-use async_channel;
+extern crate async_channel;
 
 use futures::StreamExt;
 use futures_util::sink::SinkExt;
@@ -57,7 +57,8 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
                         return;
                     }
                 };
-                if let Err(_) = framed_writer.send(frame).await {
+                if let Err(error) = framed_writer.send(frame).await {
+                    error!("Error {:?} reading from stream", error);
                     break;
                 }
             }
@@ -116,10 +117,8 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             while port < 1024 || self.inner.port_listeners.read().await.contains_key(&port) {
                 port = rand::thread_rng().gen();
             }
-        } else {
-            if self.inner.port_listeners.read().await.contains_key(&port) {
-                return Err(io::Error::from(io::ErrorKind::AddrInUse));
-            }
+        } else if self.inner.port_listeners.read().await.contains_key(&port) {
+            return Err(io::Error::from(io::ErrorKind::AddrInUse));
         }
         let (send, recv) = async_channel::bounded(8);
         self.inner.port_listeners.write().await.insert(port, send);
@@ -166,10 +165,12 @@ enum PortState {
     Open,
 }
 
+type PortPair = (u16, u16);
+
 #[derive(Debug)]
 struct StreamMultiplexorInner<T> {
     config: Config,
-    port_connections: RwLock<HashMap<(u16, u16), Arc<MuxSocket<T>>>>,
+    port_connections: RwLock<HashMap<PortPair, Arc<MuxSocket<T>>>>,
     port_listeners: RwLock<HashMap<u16, async_channel::Sender<DuplexStream>>>,
     send: RwLock<mpsc::Sender<Frame>>,
 }
@@ -310,25 +311,22 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
     pub async fn recv_frame(self: &Arc<Self>, frame: Frame) {
         let state: PortState = *self.state.read().await;
         match frame.flag {
-            Flag::Syn => match state {
-                PortState::Closed => {
-                    if let Err(error) = self
-                        .inner
-                        .send
-                        .write()
-                        .await
-                        .send(Frame::new_reply(
-                            &frame,
-                            Flag::SynAck,
-                            self.seq.fetch_add(1, Ordering::Relaxed),
-                        ))
-                        .await
-                    {
-                        error!("Error {:?} sending SynAck", error);
-                    }
-                    *self.state.write().await = PortState::SynAck;
+            Flag::Syn => if let PortState::Closed = state {
+                if let Err(error) = self
+                    .inner
+                    .send
+                    .write()
+                    .await
+                    .send(Frame::new_reply(
+                        &frame,
+                        Flag::SynAck,
+                        self.seq.fetch_add(1, Ordering::Relaxed),
+                    ))
+                    .await
+                {
+                    error!("Error {:?} sending SynAck", error);
                 }
-                _ => {}
+                *self.state.write().await = PortState::SynAck;
             },
             Flag::SynAck | Flag::Ack => match state {
                 PortState::SynAck | PortState::Ack => {
@@ -356,47 +354,39 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                                 error!("Error {:?} sending DuplexStream to acceptor", error);
                             }
                         }
-                    } else {
-                        if let Some(sender) = self.external_stream_sender.write().await.as_ref() {
-                            let stream = self.spawn_stream().await;
-                            if let Err(error) = sender.send(Ok(stream)).await {
-                                error!("Error {:?} sending DuplexStream to connector", error);
-                            }
+                    } else if let Some(sender) = self.external_stream_sender.write().await.as_ref() {
+                        let stream = self.spawn_stream().await;
+                        if let Err(error) = sender.send(Ok(stream)).await {
+                            error!("Error {:?} sending DuplexStream to connector", error);
                         }
                     }
                 }
                 _ => {}
             },
-            Flag::Unset => match state {
-                PortState::Open => {
-                    if let Some(write_half) = self.write_half.write().await.as_mut() {
-                        if let Err(error) = write_half.write_all(&frame.data).await {
-                            error!("Error {:?} writing data to write_half", error);
-                        }
+            Flag::Unset => if let PortState::Open = state {
+                if let Some(write_half) = self.write_half.write().await.as_mut() {
+                    if let Err(error) = write_half.write_all(&frame.data).await {
+                        error!("Error {:?} writing data to write_half", error);
                     }
                 }
-                _ => {}
             },
-            Flag::Fin => match state {
-                PortState::Open => {
-                    if let Err(error) = self
-                        .inner
-                        .send
-                        .write()
-                        .await
-                        .send(Frame::new_reply(
-                            &frame,
-                            Flag::Fin,
-                            self.seq.fetch_add(1, Ordering::Relaxed),
-                        ))
-                        .await
-                    {
-                        error!("Error {:?} sending Fin", error);
-                    }
-                    *self.state.write().await = PortState::Closed;
-                    *self.write_half.write().await = None;
+            Flag::Fin => if let PortState::Open = state {
+                if let Err(error) = self
+                    .inner
+                    .send
+                    .write()
+                    .await
+                    .send(Frame::new_reply(
+                        &frame,
+                        Flag::Fin,
+                        self.seq.fetch_add(1, Ordering::Relaxed),
+                    ))
+                    .await
+                {
+                    error!("Error {:?} sending Fin", error);
                 }
-                _ => {}
+                *self.state.write().await = PortState::Closed;
+                *self.write_half.write().await = None;
             },
             Flag::Rst => {
                 if matches!(*self.state.read().await, PortState::Closed | PortState::Ack) {
