@@ -430,7 +430,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                 }
             }
             Flag::Rst => {
-                if matches!(*self.state.read().await, PortState::Closed | PortState::Ack) {
+                if matches!(state, PortState::Closed | PortState::Ack) {
                     if let Some(stream_sender) = self.external_stream_sender.write().await.as_ref()
                     {
                         if let Err(error) = stream_sender
