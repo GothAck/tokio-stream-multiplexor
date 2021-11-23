@@ -126,6 +126,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
         Self { inner }
     }
 
+    /// Bind to port and return a `MuxListener<T>`
     pub async fn bind(&self, port: u16) -> Result<MuxListener<T>> {
         if !self.inner.connected.load(Ordering::Relaxed) {
             return Err(io::Error::from(io::ErrorKind::ConnectionReset));
@@ -147,6 +148,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
         })
     }
 
+    /// Connect to `port` on the remote end
     pub async fn connect(&self, port: u16) -> Result<DuplexStream> {
         if !self.inner.connected.load(Ordering::Relaxed) {
             return Err(io::Error::from(io::ErrorKind::ConnectionReset));
@@ -205,6 +207,7 @@ pub struct MuxListener<T> {
 }
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxListener<T> {
+    /// Accept a connection from the remote side
     pub async fn accept(&self) -> Result<DuplexStream> {
         Ok(self.recv.recv().await.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?)
     }
