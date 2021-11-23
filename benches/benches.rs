@@ -42,9 +42,9 @@ async fn get_mux_stream_pair() -> (
 
     let (tx, mut rx) = mpsc::channel(1);
     let mux1 = Arc::from(mux1);
-    let mux1_clone = mux1.clone();
+    let listener1 = mux1.bind(22).await.unwrap();
     tokio::spawn(async move {
-        let stream = mux1_clone.bind(22).await.unwrap().accept().await.unwrap();
+        let stream = listener1.accept().await.unwrap();
         tx.send(stream).await.unwrap();
     });
 
