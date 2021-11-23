@@ -10,7 +10,7 @@ use tokio::{
 };
 
 const PAYLOAD_SIZE: usize = 1024 * 1024;
-const SEND_ROUND: usize = 16 * 1024;
+const SEND_ROUND: usize = 256;
 const HANDSHAKE_ROUND: usize = 16 * 1024;
 
 async fn get_tcp_stream_pair() -> (TcpStream, TcpStream) {
