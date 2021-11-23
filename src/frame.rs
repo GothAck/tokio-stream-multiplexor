@@ -1,4 +1,4 @@
-use bytes::{Buf, BytesMut};
+use bytes::{Buf, Bytes, BytesMut};
 use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
 
@@ -10,7 +10,7 @@ pub struct Frame {
     pub dport: u16,
     pub flag: Flag,
     pub seq: u32,
-    pub data: Vec<u8>,
+    pub data: Bytes,
 }
 
 impl Frame {
@@ -20,7 +20,7 @@ impl Frame {
             dport,
             flag,
             seq: 0,
-            data: vec![],
+            data: Bytes::new(),
         }
     }
 
@@ -30,7 +30,7 @@ impl Frame {
             dport: frame.sport,
             flag,
             seq,
-            data: vec![],
+            data: Bytes::new(),
         }
     }
 
@@ -40,7 +40,7 @@ impl Frame {
             dport,
             flag: Flag::Unset,
             seq,
-            data: data.to_vec(),
+            data: Bytes::copy_from_slice(data),
         }
     }
 
@@ -50,7 +50,7 @@ impl Frame {
             dport,
             flag: Flag::Rst,
             seq,
-            data: vec![],
+            data: Bytes::new(),
         }
     }
 }
