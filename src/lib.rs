@@ -18,7 +18,7 @@ use rand::Rng;
 pub use tokio::io::DuplexStream;
 use tokio::{
     io::{duplex, split, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, WriteHalf},
-    sync::{mpsc, RwLock},
+    sync::{mpsc, watch, RwLock},
 };
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::error;
@@ -34,17 +34,20 @@ pub struct StreamMultiplexor<T> {
 }
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
+    /// Constructs a new StreamMultiplexor<T>
     pub fn new(inner: T, config: Config) -> Self {
         let (reader, writer) = split(inner);
 
         let framed_reader = FramedRead::new(reader, FrameDecoder::new(config));
         let framed_writer = FramedWrite::new(writer, FrameEncoder::new(config));
         let (send, recv) = mpsc::channel(10);
+        let (watch_connected_send, _) = watch::channel(true);
         let inner = Arc::from(StreamMultiplexorInner {
             config,
             connected: AtomicBool::from(true),
             port_connections: RwLock::from(HashMap::new()),
             port_listeners: RwLock::from(HashMap::new()),
+            watch_connected_send: watch_connected_send,
             send: RwLock::from(send),
         });
 
@@ -75,6 +78,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
                     error => {
                         error!("Error {:?} reading from framed_reader", error);
 
+                        inner_clone.watch_connected_send.send_replace(false);
                         inner_clone.connected.store(false, Ordering::Relaxed);
 
                         for (_, connection) in inner_clone.port_connections.write().await.drain() {
@@ -178,6 +182,10 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             .await
             .ok_or(io::Error::from(io::ErrorKind::Other))?
     }
+
+    pub fn watch_connected(&self) -> watch::Receiver<bool> {
+        self.inner.watch_connected_send.subscribe()
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -196,6 +204,7 @@ struct StreamMultiplexorInner<T> {
     connected: AtomicBool,
     port_connections: RwLock<HashMap<PortPair, Arc<MuxSocket<T>>>>,
     port_listeners: RwLock<HashMap<u16, async_channel::Sender<DuplexStream>>>,
+    watch_connected_send: watch::Sender<bool>,
     send: RwLock<mpsc::Sender<Frame>>,
 }
 
@@ -554,6 +563,58 @@ async fn wrapped_stream_disconnect_listener() {
     let listener = sm_a.bind(1024).await.unwrap();
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    assert!(matches!(listener.accept().await, Err(..)));
+}
+
+#[tokio::test]
+async fn wrapped_stream_disconnect_subscribe_before() {
+    use tokio::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        let _ = listener.accept().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    });
+
+    let stream = TcpStream::connect(local_addr).await.unwrap();
+    let sm_a = StreamMultiplexor::new(stream, Config::default());
+    let mut connected = sm_a.watch_connected();
+    assert_eq!(*connected.borrow(), true);
+
+    let listener = sm_a.bind(1024).await.unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    assert!(matches!(connected.changed().await, Ok(())));
+    assert_eq!(*connected.borrow(), false);
+    assert!(matches!(listener.accept().await, Err(..)));
+}
+
+#[tokio::test]
+async fn wrapped_stream_disconnect_subscribe_after() {
+    use tokio::net::{TcpListener, TcpStream};
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        let _ = listener.accept().await.unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+    });
+
+    let stream = TcpStream::connect(local_addr).await.unwrap();
+    let sm_a = StreamMultiplexor::new(stream, Config::default());
+
+    let listener = sm_a.bind(1024).await.unwrap();
+
+    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+    let connected = sm_a.watch_connected();
+
+    assert_eq!(*connected.borrow(), false);
 
     assert!(matches!(listener.accept().await, Err(..)));
 }
