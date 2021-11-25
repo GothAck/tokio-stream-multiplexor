@@ -618,3 +618,102 @@ async fn wrapped_stream_disconnect_subscribe_after() {
 
     assert!(matches!(listener.accept().await, Err(..)));
 }
+
+#[tokio::test]
+async fn listen_accept_multiple() {
+    let (a, b) = duplex(10);
+
+    let input_bytes: Vec<u8> = (0..(1024 * 1024)).map(|_| rand::random::<u8>()).collect();
+    let len = input_bytes.len();
+
+    let sm_a = StreamMultiplexor::new(a, Config::default());
+    let sm_b = StreamMultiplexor::new(b, Config::default());
+
+    let input_bytes_clone = input_bytes.clone();
+    tokio::spawn(async move {
+        let listener = sm_b.bind(22).await.unwrap();
+        loop {
+            let input_bytes_clone = input_bytes_clone.clone();
+            let mut conn = listener.accept().await.unwrap();
+            tokio::spawn(async move {
+                let mut i = 0;
+                while i < input_bytes_clone.len() {
+                    let res = conn.write_all(&input_bytes_clone[i..i + 1024]).await;
+                    assert!(matches!(res, Ok(..)));
+                    i += 1024;
+                }
+            });
+        }
+    });
+
+    let mut output_bytes0: Vec<u8> = vec![];
+    let mut output_bytes1: Vec<u8> = vec![];
+
+    let mut conn0 = sm_a.connect(22).await.unwrap();
+    let mut conn1 = sm_a.connect(22).await.unwrap();
+    while output_bytes0.len() < len {
+        let mut buf = [0u8; 2048];
+        let bytes = conn0.read(&mut buf).await.unwrap();
+        output_bytes0.extend_from_slice(&buf[..bytes]);
+        let bytes = conn1.read(&mut buf).await.unwrap();
+        output_bytes1.extend_from_slice(&buf[..bytes]);
+    }
+
+    assert_eq!(input_bytes, output_bytes0);
+    assert_eq!(input_bytes, output_bytes1);
+}
+
+#[tokio::test]
+async fn listen_multiple_accept() {
+    let (a, b) = duplex(10);
+
+    let input_bytes: Vec<u8> = (0..(1024 * 1024)).map(|_| rand::random::<u8>()).collect();
+    let len = input_bytes.len();
+
+    let sm_a = StreamMultiplexor::new(a, Config::default());
+    let sm_b = StreamMultiplexor::new(b, Config::default());
+
+    let input_bytes_clone = input_bytes.clone();
+    let listener = sm_b.bind(22).await.unwrap();
+    tokio::spawn(async move {
+        let mut conn = listener.accept().await.unwrap();
+        tokio::spawn(async move {
+            let mut i = 0;
+            while i < input_bytes_clone.len() {
+                let res = conn.write_all(&input_bytes_clone[i..i + 1024]).await;
+                assert!(matches!(res, Ok(..)));
+                i += 1024;
+            }
+        });
+    });
+
+    let input_bytes_clone = input_bytes.clone();
+    let listener = sm_b.bind(23).await.unwrap();
+    tokio::spawn(async move {
+        let mut conn = listener.accept().await.unwrap();
+        tokio::spawn(async move {
+            let mut i = 0;
+            while i < input_bytes_clone.len() {
+                let res = conn.write_all(&input_bytes_clone[i..i + 1024]).await;
+                assert!(matches!(res, Ok(..)));
+                i += 1024;
+            }
+        });
+    });
+
+    let mut output_bytes0: Vec<u8> = vec![];
+    let mut output_bytes1: Vec<u8> = vec![];
+
+    let mut conn0 = sm_a.connect(22).await.unwrap();
+    let mut conn1 = sm_a.connect(23).await.unwrap();
+    while output_bytes0.len() < len {
+        let mut buf = [0u8; 2048];
+        let bytes = conn0.read(&mut buf).await.unwrap();
+        output_bytes0.extend_from_slice(&buf[..bytes]);
+        let bytes = conn1.read(&mut buf).await.unwrap();
+        output_bytes1.extend_from_slice(&buf[..bytes]);
+    }
+
+    assert_eq!(input_bytes, output_bytes0);
+    assert_eq!(input_bytes, output_bytes1);
+}
