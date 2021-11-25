@@ -138,7 +138,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
         let mut port = port;
         if port == 0 {
             while port < 1024 || self.inner.port_listeners.read().await.contains_key(&port) {
-                port = rand::thread_rng().gen();
+                port = rand::thread_rng().gen_range(1024u16..u16::MAX);
             }
         } else if self.inner.port_listeners.read().await.contains_key(&port) {
             return Err(io::Error::from(io::ErrorKind::AddrInUse));
@@ -157,7 +157,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
         if !self.inner.connected.load(Ordering::Relaxed) {
             return Err(io::Error::from(io::ErrorKind::ConnectionReset));
         }
-        let mut local_port = 0;
+        let mut local_port: u16 = 0;
         while local_port < 1024
             || self
                 .inner
@@ -166,7 +166,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
                 .await
                 .contains_key(&(local_port, port))
         {
-            local_port = rand::thread_rng().gen();
+            local_port = rand::thread_rng().gen_range(1024u16..u16::MAX);
         }
 
         let mux_socket = MuxSocket::new(self.inner.clone(), local_port, port, false);
