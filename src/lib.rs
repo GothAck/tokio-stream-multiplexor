@@ -31,7 +31,7 @@ use tracing::{error, trace};
 pub use config::Config;
 use frame::{Flag, Frame, FrameDecoder, FrameEncoder};
 
-type Result<T> = std::result::Result<T, io::Error>;
+pub type Result<T> = std::result::Result<T, io::Error>;
 
 pub struct StreamMultiplexor<T> {
     inner: Arc<StreamMultiplexorInner<T>>,
