@@ -4,14 +4,31 @@ use tokio::{
     time::{sleep, Duration},
 };
 
+use tracing_subscriber::filter::{EnvFilter};
+
 use super::{StreamMultiplexor, Config};
 
 #[ctor::ctor]
 fn init_tests() {
-    tracing_subscriber::fmt::init();
+    let mut filter = {
+        if let Ok(filter) = EnvFilter::try_from_default_env() {
+            filter
+        } else {
+            EnvFilter::default()
+        }
+    };
+    filter = filter
+        .add_directive("tokio_stream_multiplexor=trace".parse().unwrap());
+
+    tracing_subscriber::fmt::Subscriber::builder()
+        .without_time()
+        .with_test_writer()
+        .with_env_filter(filter)
+        .init();
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn connect_no_listen_fails() {
     let (a, b) = duplex(10);
 
@@ -22,6 +39,7 @@ async fn connect_no_listen_fails() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn connect_listen_succeeds() {
     let (a, b) = duplex(10);
 
@@ -37,6 +55,7 @@ async fn connect_listen_succeeds() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn dropped_connection_rsts() {
     let (a, b) = duplex(10);
 
@@ -51,6 +70,7 @@ async fn dropped_connection_rsts() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn connected_stream_passes_data() {
     let (a, b) = duplex(10);
 
@@ -84,6 +104,7 @@ async fn connected_stream_passes_data() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn wrapped_stream_disconnect() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local_addr = listener.local_addr().unwrap();
@@ -102,6 +123,7 @@ async fn wrapped_stream_disconnect() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn wrapped_stream_disconnect_listener() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local_addr = listener.local_addr().unwrap();
@@ -121,6 +143,7 @@ async fn wrapped_stream_disconnect_listener() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn wrapped_stream_disconnect_subscribe_before() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local_addr = listener.local_addr().unwrap();
@@ -145,6 +168,7 @@ async fn wrapped_stream_disconnect_subscribe_before() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn wrapped_stream_disconnect_subscribe_after() {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let local_addr = listener.local_addr().unwrap();
@@ -169,6 +193,7 @@ async fn wrapped_stream_disconnect_subscribe_after() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn listen_accept_multiple() {
     let (a, b) = duplex(10);
 
@@ -213,6 +238,7 @@ async fn listen_accept_multiple() {
 }
 
 #[tokio::test]
+#[tracing::instrument]
 async fn listen_multiple_accept() {
     let (a, b) = duplex(10);
 
