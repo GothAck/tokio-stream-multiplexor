@@ -22,7 +22,7 @@ use futures_util::sink::SinkExt;
 use rand::Rng;
 pub use tokio::io::DuplexStream;
 use tokio::{
-    io::{duplex, split, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, WriteHalf},
+    io::{duplex, split, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf},
     sync::{mpsc, watch, RwLock},
 };
 use tokio_util::codec::{FramedRead, FramedWrite};
@@ -70,83 +70,100 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             send: RwLock::from(send),
         });
 
-        tokio::spawn(async move {
-            let mut recv = recv;
-            let mut framed_writer = framed_writer;
-            loop {
-                let frame = match recv.recv().await {
-                    Some(v) => v,
-                    error => {
-                        error!("Error {:?} reading from stream", error);
-                        break;
-                    }
-                };
-                if let Err(error) = framed_writer.send(frame).await {
+        let inner_clone = inner.clone();
+        tokio::spawn(Self::framed_writer_sender(inner_clone, recv, framed_writer));
+
+        let inner_clone = inner.clone();
+        tokio::spawn(Self::framed_reader_sender(inner_clone, framed_reader));
+
+        Self { inner }
+    }
+
+    #[tracing::instrument(skip(recv, framed_writer))]
+    async fn framed_writer_sender(
+        _inner: Arc<StreamMultiplexorInner<T>>,
+        mut recv: mpsc::Receiver<Frame>,
+        mut framed_writer: FramedWrite<WriteHalf<T>, FrameEncoder>,
+    ) {
+        trace!("");
+        loop {
+            let frame = match recv.recv().await {
+                Some(v) => v,
+                error => {
                     error!("Error {:?} reading from stream", error);
                     break;
                 }
+            };
+            if let Err(error) = framed_writer.send(frame).await {
+                error!("Error {:?} reading from stream", error);
+                break;
             }
-        });
+        }
+    }
 
-        let inner_clone = inner.clone();
-        tokio::spawn(async move {
-            let mut framed_reader = framed_reader;
-            loop {
-                let frame: Frame = match framed_reader.next().await {
-                    Some(Ok(v)) => v,
-                    error => {
-                        error!("Error {:?} reading from framed_reader", error);
+    #[tracing::instrument(skip(framed_reader))]
+    async fn framed_reader_sender(
+        inner: Arc<StreamMultiplexorInner<T>>,
+        mut framed_reader: FramedRead<ReadHalf<T>, FrameDecoder>,
+    ) {
+        trace!("");
+        loop {
+            let frame: Frame = match framed_reader.next().await {
+                Some(Ok(v)) => v,
+                error => {
+                    error!("Error {:?} reading from framed_reader", error);
 
-                        inner_clone.watch_connected_send.send_replace(false);
-                        inner_clone.connected.store(false, Ordering::Relaxed);
+                    inner.watch_connected_send.send_replace(false);
+                    inner.connected.store(false, Ordering::Relaxed);
 
-                        for (_, connection) in inner_clone.port_connections.write().await.drain() {
-                            if let Some(sender) = connection.external_stream_sender.write().await.as_ref() {
-                                if let Err(error) = sender.send(Err(io::Error::from(io::ErrorKind::BrokenPipe))).await {
-                                    error!("Error {:?} dropping port_connections", error);
-                                }
+                    for (_, connection) in inner.port_connections.write().await.drain() {
+                        if let Some(sender) = connection.external_stream_sender.write().await.as_ref() {
+                            trace!("Send Error to {:?} external_stream_reader", connection);
+                            if let Err(error) = sender.send(Err(io::Error::from(io::ErrorKind::BrokenPipe))).await {
+                                error!("Error {:?} dropping port_connections", error);
                             }
                         }
-                        inner_clone.port_listeners.write().await.clear();
-
-                        break;
                     }
-                };
-                if matches!(frame.flag, Flag::Syn)
-                    && inner_clone
-                        .port_listeners
-                        .read()
-                        .await
-                        .contains_key(&frame.dport)
-                {
-                    let socket =
-                        MuxSocket::new(inner_clone.clone(), frame.dport, frame.sport, true);
-                    inner_clone
-                        .port_connections
-                        .write()
-                        .await
-                        .insert((frame.dport, frame.sport), socket.clone());
-                    socket.recv_frame(frame).await;
-                } else if let Some(socket) = inner_clone
-                    .port_connections
+                    inner.port_listeners.write().await.clear();
+
+                    break;
+                }
+            };
+            if matches!(frame.flag, Flag::Syn)
+                && inner
+                    .port_listeners
                     .read()
                     .await
-                    .get(&(frame.dport, frame.sport))
+                    .contains_key(&frame.dport)
+            {
+                trace!("Syn received for listener, vending MuxSocket");
+                let socket =
+                    MuxSocket::new(inner.clone(), frame.dport, frame.sport, true);
+                inner
+                    .port_connections
+                    .write()
+                    .await
+                    .insert((frame.dport, frame.sport), socket.clone());
+                socket.recv_frame(frame).await;
+            } else if let Some(socket) = inner
+                .port_connections
+                .read()
+                .await
+                .get(&(frame.dport, frame.sport))
+            {
+                trace!("Frame received for active socket {:?}", socket);
+                socket.recv_frame(frame).await;
+            } else if !matches!(frame.flag, Flag::Rst) {
+                trace!("Frame received for unknown (dport, sport) ({}, {}), sending Rst", frame.dport, frame.sport);
+                let framed_writer = inner.send.write().await;
+                if let Err(error) = framed_writer
+                    .send(Frame::new_reply(&frame, Flag::Rst, 0))
+                    .await
                 {
-                    socket.recv_frame(frame).await;
-                } else if !matches!(frame.flag, Flag::Rst) {
-                    let framed_writer = inner_clone.send.write().await;
-                    if let Err(error) = framed_writer
-                        .send(Frame::new_reply(&frame, Flag::Rst, 0))
-                        .await
-                    {
-                        error!("Error {:?} sending Rst", error);
-                    }
+                    error!("Error {:?} sending Rst", error);
                 }
             }
-        });
-
-        Self { inner }
+        }
     }
 
     /// Bind to port and return a `MuxListener<T>`
@@ -363,62 +380,68 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
 
         *self.write_half.write().await = Some(write_half);
 
-        let self_clone = self.clone();
-        tokio::spawn(async move {
-            let mut read_half = read_half;
-            let mut buf: Vec<u8> = vec![];
-            buf.resize(self_clone.inner.config.buf_size, 0);
-            loop {
-                let bytes = match read_half.read(&mut buf).await {
-                    Ok(bytes) => bytes,
-                    Err(error) => {
-                        error!("Error {:?} reading bytes from read_half", error);
-                        break;
-                    }
-                };
-                if bytes == 0 {
+        tokio::spawn(self.clone().stream_read(read_half));
+
+        s1
+    }
+
+    #[tracing::instrument]
+    async fn stream_read(self: Arc<Self>, read_half: ReadHalf<DuplexStream>) {
+        trace!("");
+        let mut read_half = read_half;
+        let mut buf: Vec<u8> = vec![];
+        buf.resize(self.inner.config.buf_size, 0);
+        loop {
+            let bytes = match read_half.read(&mut buf).await {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    error!("Error {:?} reading bytes from read_half", error);
                     break;
                 }
-                if let Err(error) = self_clone
-                    .inner
-                    .send
-                    .write()
-                    .await
-                    .send(Frame::new_data(
-                        self_clone.sport,
-                        self_clone.dport,
-                        self_clone.seq.fetch_add(1, Ordering::Relaxed),
-                        &buf[..bytes],
-                    ))
-                    .await
-                {
-                    error!("Error {:?} sending data frame", error);
-                }
+            };
+            trace!("bytes = {}", bytes);
+            if bytes == 0 {
+                trace!("bytes == 0; closed");
+                break;
             }
-            if let Err(error) = self_clone
+            if let Err(error) = self
                 .inner
                 .send
                 .write()
                 .await
-                .send(Frame::new_rst(
-                    self_clone.sport,
-                    self_clone.dport,
-                    self_clone.seq.fetch_add(1, Ordering::Relaxed),
+                .send(Frame::new_data(
+                    self.sport,
+                    self.dport,
+                    self.seq.fetch_add(1, Ordering::Relaxed),
+                    &buf[..bytes],
                 ))
                 .await
             {
-                error!("Error {:?} sending Rst", error);
+                error!("Error {:?} sending data frame", error);
             }
-            *self_clone.write_half.write().await = None;
-            self_clone
-                .inner
-                .port_connections
-                .write()
-                .await
-                .remove(&(self_clone.sport, self_clone.dport));
-        });
-
-        s1
+        }
+        if let Err(error) = self
+            .inner
+            .send
+            .write()
+            .await
+            .send(Frame::new_rst(
+                self.sport,
+                self.dport,
+                self.seq.fetch_add(1, Ordering::Relaxed),
+            ))
+            .await
+        {
+            error!("Error {:?} sending Rst", error);
+        }
+        trace!("Drop write_half");
+        *self.write_half.write().await = None;
+        self
+            .inner
+            .port_connections
+            .write()
+            .await
+            .remove(&(self.sport, self.dport));
     }
 
     #[tracing::instrument]
