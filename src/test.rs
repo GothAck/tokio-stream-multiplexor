@@ -133,7 +133,7 @@ async fn connected_stream_passes_data() {
             assert!(matches!(res, Ok(..)));
             i += 1024;
         }
-        sleep(Duration::from_millis(1)).await;
+        sleep(Duration::from_millis(1)).await; // FIXME: Shouldn't need to sleep here?
         info!("Done send");
     });
 
