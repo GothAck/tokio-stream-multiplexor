@@ -62,11 +62,16 @@ async fn dropped_connection_rsts() {
     let sm_a = StreamMultiplexor::new(a, Config::default().with_identifier("sm_a"));
     let sm_b = StreamMultiplexor::new(b, Config::default().with_identifier("sm_b"));
 
+    let listener = sm_b.bind(22).await.unwrap();
     tokio::spawn(async move {
-        sm_b.bind(22).await.unwrap().accept().await.unwrap();
+        listener.accept().await.unwrap();
     });
 
-    assert!(matches!(sm_a.connect(22).await, Ok(_)));
+    let res = sm_a.connect(22).await;
+    assert!(matches!(res, Ok(_)));
+    let res = res.unwrap().write_all(&[0u8; 1024]).await;
+    println!("{:?}", res);
+    assert!(matches!(res, Err(_)));
 }
 
 #[tokio::test]

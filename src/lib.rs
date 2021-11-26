@@ -117,6 +117,10 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
                     inner.connected.store(false, Ordering::Relaxed);
 
                     for (_, connection) in inner.port_connections.write().await.drain() {
+                        trace!("Send rst to {:?}", connection);
+                        if let Err(_) = connection.rst.send(true) {
+                            error!("Error sending rst to connection {:?}", connection);
+                        }
                         if let Some(sender) = connection.external_stream_sender.write().await.as_ref() {
                             trace!("Send Error to {:?} external_stream_reader", connection);
                             if let Err(error) = sender.send(Err(io::Error::from(io::ErrorKind::BrokenPipe))).await {
@@ -306,6 +310,7 @@ struct MuxSocket<T> {
     state: RwLock<PortState>,
     seq: AtomicU32,
     write_half: RwLock<Option<WriteHalf<DuplexStream>>>,
+    rst: watch::Sender<bool>,
     external_stream_sender: RwLock<Option<mpsc::Sender<Result<DuplexStream>>>>,
 }
 
@@ -332,6 +337,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
         dport: u16,
         accepting: bool,
     ) -> Arc<Self> {
+        let (rst, _) = watch::channel(false);
         Arc::from(Self {
             inner,
             accepting,
@@ -340,6 +346,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
             state: RwLock::from(PortState::Closed),
             seq: AtomicU32::new(0),
             write_half: RwLock::from(None),
+            rst,
             external_stream_sender: RwLock::from(None),
         })
     }
@@ -388,15 +395,28 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
     #[tracing::instrument]
     async fn stream_read(self: Arc<Self>, read_half: ReadHalf<DuplexStream>) {
         trace!("");
+        let mut rst = self.rst.subscribe();
         let mut read_half = read_half;
         let mut buf: Vec<u8> = vec![];
         buf.resize(self.inner.config.buf_size, 0);
         loop {
-            let bytes = match read_half.read(&mut buf).await {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    error!("Error {:?} reading bytes from read_half", error);
-                    break;
+            if *rst.borrow() {
+                trace!("Rst is true");
+                break;
+            }
+            let bytes = tokio::select! {
+                res = read_half.read(&mut buf) => {
+                    match res {
+                        Ok(bytes) => bytes,
+                        Err(error) => {
+                            error!("Error {:?} reading bytes from read_half", error);
+                            break;
+                        },
+                    }
+                }
+                _ = rst.changed() => {
+                    trace!("Rst changed");
+                    continue;
                 }
             };
             trace!("bytes = {}", bytes);
@@ -420,20 +440,6 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                 error!("Error {:?} sending data frame", error);
             }
         }
-        if let Err(error) = self
-            .inner
-            .send
-            .write()
-            .await
-            .send(Frame::new_rst(
-                self.sport,
-                self.dport,
-                self.seq.fetch_add(1, Ordering::Relaxed),
-            ))
-            .await
-        {
-            error!("Error {:?} sending Rst", error);
-        }
         trace!("Drop write_half");
         *self.write_half.write().await = None;
         self
@@ -442,6 +448,23 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
             .write()
             .await
             .remove(&(self.sport, self.dport));
+
+        trace!("Send Fin");
+        if let Err(error) = self
+            .inner
+            .send
+            .write()
+            .await
+            .send(Frame::new_no_data(
+                self.sport,
+                self.dport,
+                Flag::Fin,
+                self.seq.fetch_add(1, Ordering::Relaxed),
+            ))
+            .await
+        {
+            error!("Error {:?} sending Fin", error);
+        }
     }
 
     #[tracing::instrument]
@@ -535,6 +558,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                     }
                     *self.state.write().await = PortState::Closed;
                     *self.write_half.write().await = None;
+                    let _ = self.rst.send(true);
                 }
             }
             Flag::Rst => {
@@ -552,6 +576,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                 }
                 *self.state.write().await = PortState::Closed;
                 *self.write_half.write().await = None;
+                let _ = self.rst.send(true);
             }
         }
     }

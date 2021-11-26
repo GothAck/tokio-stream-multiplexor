@@ -27,6 +27,15 @@ impl std::fmt::Debug for Frame {
 }
 
 impl Frame {
+    pub fn new_no_data(sport: u16, dport: u16, flag: Flag, seq: u32) -> Self {
+        Self {
+            sport,
+            dport,
+            flag,
+            seq,
+            data: Bytes::new(),
+        }
+    }
     pub fn new_init(sport: u16, dport: u16, flag: Flag) -> Self {
         Self {
             sport,
