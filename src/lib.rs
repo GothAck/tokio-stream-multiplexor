@@ -183,25 +183,26 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             trace!("Not connected, raise Error");
             return Err(io::Error::from(io::ErrorKind::ConnectionReset));
         }
-        let mut local_port: u16 = 0;
-        while local_port < 1024
+        let mut sport: u16 = 0;
+        while sport < 1024
             || self
                 .inner
                 .port_connections
                 .read()
                 .await
-                .contains_key(&(local_port, port))
+                .contains_key(&(sport, port))
         {
-            local_port = rand::thread_rng().gen_range(1024u16..u16::MAX);
+            sport = rand::thread_rng().gen_range(1024u16..u16::MAX);
         }
+        trace!("sport = {}", sport);
 
-        let mux_socket = MuxSocket::new(self.inner.clone(), local_port, port, false);
+        let mux_socket = MuxSocket::new(self.inner.clone(), sport, port, false);
         let mut rx = mux_socket.stream().await;
         self.inner
             .port_connections
             .write()
             .await
-            .insert((local_port, port), mux_socket.clone());
+            .insert((sport, port), mux_socket.clone());
         mux_socket.start().await;
 
         rx.recv()
@@ -283,8 +284,8 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxListener<T> {
 struct MuxSocket<T> {
     inner: Arc<StreamMultiplexorInner<T>>,
     accepting: bool,
-    local_port: u16,
-    remote_port: u16,
+    sport: u16,
+    dport: u16,
     state: RwLock<PortState>,
     seq: AtomicU32,
     write_half: RwLock<Option<WriteHalf<DuplexStream>>>,
@@ -295,8 +296,8 @@ impl<T> Debug for MuxSocket<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
         f.debug_struct("MuxSocket")
             .field("id", &self.inner.config.identifier)
-            .field("local_port", &self.local_port)
-            .field("remote_port", &self.remote_port)
+            .field("sport", &self.sport)
+            .field("dport", &self.dport)
             .finish()
     }
 }
@@ -310,15 +311,15 @@ impl<T> Drop for MuxSocket<T> {
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
     pub fn new(
         inner: Arc<StreamMultiplexorInner<T>>,
-        local_port: u16,
-        remote_port: u16,
+        sport: u16,
+        dport: u16,
         accepting: bool,
     ) -> Arc<Self> {
         Arc::from(Self {
             inner,
             accepting,
-            local_port,
-            remote_port,
+            sport,
+            dport,
             state: RwLock::from(PortState::Closed),
             seq: AtomicU32::new(0),
             write_half: RwLock::from(None),
@@ -342,8 +343,8 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
             .write()
             .await
             .send(Frame::new_init(
-                self.local_port,
-                self.remote_port,
+                self.sport,
+                self.dport,
                 Flag::Syn,
             ))
             .await
@@ -384,8 +385,8 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                     .write()
                     .await
                     .send(Frame::new_data(
-                        self_clone.local_port,
-                        self_clone.remote_port,
+                        self_clone.sport,
+                        self_clone.dport,
                         self_clone.seq.fetch_add(1, Ordering::Relaxed),
                         &buf[..bytes],
                     ))
@@ -400,8 +401,8 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                 .write()
                 .await
                 .send(Frame::new_rst(
-                    self_clone.local_port,
-                    self_clone.remote_port,
+                    self_clone.sport,
+                    self_clone.dport,
                     self_clone.seq.fetch_add(1, Ordering::Relaxed),
                 ))
                 .await
@@ -414,7 +415,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                 .port_connections
                 .write()
                 .await
-                .remove(&(self_clone.local_port, self_clone.remote_port));
+                .remove(&(self_clone.sport, self_clone.dport));
         });
 
         s1
