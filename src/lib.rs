@@ -30,6 +30,8 @@
 //!
 //! Approximately 4.5 times slower than TCP, but still able to shovel 1.8 GiB/s of shite... Seems alright to me. (Numbers could possibly be improved with some tuning of the config params too.)
 
+#![warn(missing_docs)]
+
 mod config;
 mod frame;
 mod inner;
@@ -62,8 +64,10 @@ use inner::StreamMultiplexorInner;
 pub use listener::MuxListener;
 use socket::MuxSocket;
 
+/// Result type returned by `bind()`, `accept()`, and `connect()`.
 pub type Result<T> = std::result::Result<T, io::Error>;
 
+/// The Stream Multiplexor.
 pub struct StreamMultiplexor<T> {
     inner: Arc<StreamMultiplexorInner<T>>,
 }
@@ -84,12 +88,12 @@ impl<T> Drop for StreamMultiplexor<T> {
 }
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
-    /// Constructs a new `StreamMultiplexor<T>`
+    /// Constructs a new `StreamMultiplexor<T>`.
     pub fn new(inner: T, config: StreamMultiplexorConfig) -> Self {
         Self::new_running(inner, config, true)
     }
 
-    /// Constructs a new paused `StreamMultiplexor<T>`
+    /// Constructs a new paused `StreamMultiplexor<T>`.
     ///
     /// This allows you to bind and listen on a bunch of ports before
     /// processing any packets from the inner stream, removing race conditions
@@ -133,7 +137,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
         }
     }
 
-    /// Bind to port and return a `MuxListener<T>`
+    /// Bind to port and return a `MuxListener<T>`.
     #[tracing::instrument]
     pub async fn bind(&self, port: u16) -> Result<MuxListener<T>> {
         trace!("");
@@ -155,7 +159,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
         Ok(MuxListener::new(self.inner.clone(), port, recv))
     }
 
-    /// Connect to `port` on the remote end
+    /// Connect to `port` on the remote end.
     #[tracing::instrument]
     pub async fn connect(&self, port: u16) -> Result<DuplexStream> {
         trace!("");
@@ -190,6 +194,8 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             .ok_or_else(|| io::Error::from(io::ErrorKind::Other))?
     }
 
+    /// Return a `tokio::sync::watch::Receiver` that will update to `false`
+    /// when the inner stream closes.
     #[tracing::instrument]
     pub fn watch_connected(&self) -> watch::Receiver<bool> {
         trace!("");

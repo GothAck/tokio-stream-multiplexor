@@ -11,6 +11,7 @@ use tracing::trace;
 
 use crate::{inner::StreamMultiplexorInner, Result};
 
+/// Listener struct returned by `StreamMultiplexor<T>::bind()`
 pub struct MuxListener<T> {
     inner: Arc<StreamMultiplexorInner<T>>,
     port: u16,
