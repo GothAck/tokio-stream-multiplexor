@@ -72,7 +72,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
 
         let framed_reader = FramedRead::new(reader, FrameDecoder::new(config));
         let framed_writer = FramedWrite::new(writer, FrameEncoder::new(config));
-        let (send, recv) = mpsc::channel(10);
+        let (send, recv) = mpsc::channel(config.max_queued_frames);
         let (watch_connected_send, _) = watch::channel(true);
         let (running, _) = watch::channel(running);
         let inner = Arc::from(StreamMultiplexorInner {
@@ -118,7 +118,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             trace!("port_listeners already contains {}", port);
             return Err(io::Error::from(io::ErrorKind::AddrInUse));
         }
-        let (send, recv) = async_channel::bounded(8);
+        let (send, recv) = async_channel::bounded(self.inner.config.accept_queue_len);
         self.inner.port_listeners.write().await.insert(port, send);
         Ok(MuxListener::new(self.inner.clone(), port, recv))
     }
