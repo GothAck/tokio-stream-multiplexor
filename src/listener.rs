@@ -1,26 +1,15 @@
 use std::{
-    fmt::{
-        Debug,
-        Formatter,
-        Result as FmtResult,
-    },
+    fmt::{Debug, Formatter, Result as FmtResult},
     io,
-    sync::{
-        Arc,
-    },
+    sync::Arc,
 };
 
 extern crate async_channel;
 pub use tokio::io::DuplexStream;
-use tokio::{
-    io::{AsyncRead, AsyncWrite},
-};
-use tracing::{trace};
+use tokio::io::{AsyncRead, AsyncWrite};
+use tracing::trace;
 
-use crate::{
-    inner::StreamMultiplexorInner,
-    Result,
-};
+use crate::{inner::StreamMultiplexorInner, Result};
 
 pub struct MuxListener<T> {
     inner: Arc<StreamMultiplexorInner<T>>,
@@ -29,12 +18,12 @@ pub struct MuxListener<T> {
 }
 
 impl<T> MuxListener<T> {
-    pub(crate) fn new(inner: Arc<StreamMultiplexorInner<T>>, port: u16, recv: async_channel::Receiver<DuplexStream>) -> Self {
-        Self {
-            inner,
-            port,
-            recv,
-        }
+    pub(crate) fn new(
+        inner: Arc<StreamMultiplexorInner<T>>,
+        port: u16,
+        recv: async_channel::Receiver<DuplexStream>,
+    ) -> Self {
+        Self { inner, port, recv }
     }
 }
 
@@ -58,6 +47,9 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxListener<T> {
     #[tracing::instrument]
     pub async fn accept(&self) -> Result<DuplexStream> {
         trace!("");
-        self.recv.recv().await.map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+        self.recv
+            .recv()
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 }

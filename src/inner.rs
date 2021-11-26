@@ -1,11 +1,7 @@
 use std::{
     collections::HashMap,
+    fmt::{Debug, Formatter, Result as FmtResult},
     io,
-    fmt::{
-        Debug,
-        Formatter,
-        Result as FmtResult,
-    },
     sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -98,9 +94,14 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
                         if connection.rst.send(true).is_err() {
                             error!("Error sending rst to connection {:?}", connection);
                         }
-                        if let Some(sender) = connection.external_stream_sender.write().await.as_ref() {
+                        if let Some(sender) =
+                            connection.external_stream_sender.write().await.as_ref()
+                        {
                             trace!("Send Error to {:?} external_stream_reader", connection);
-                            if let Err(error) = sender.send(Err(io::Error::from(io::ErrorKind::BrokenPipe))).await {
+                            if let Err(error) = sender
+                                .send(Err(io::Error::from(io::ErrorKind::BrokenPipe)))
+                                .await
+                            {
                                 error!("Error {:?} dropping port_connections", error);
                             }
                         }
@@ -111,17 +112,11 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
                 }
             };
             if matches!(frame.flag, Flag::Syn)
-                && self
-                    .port_listeners
-                    .read()
-                    .await
-                    .contains_key(&frame.dport)
+                && self.port_listeners.read().await.contains_key(&frame.dport)
             {
                 trace!("Syn received for listener, vending MuxSocket");
-                let socket =
-                    MuxSocket::new(self.clone(), frame.dport, frame.sport, true);
-                self
-                    .port_connections
+                let socket = MuxSocket::new(self.clone(), frame.dport, frame.sport, true);
+                self.port_connections
                     .write()
                     .await
                     .insert((frame.dport, frame.sport), socket.clone());
@@ -135,7 +130,11 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
                 trace!("Frame received for active socket {:?}", socket);
                 socket.recv_frame(frame).await;
             } else if !matches!(frame.flag, Flag::Rst) {
-                trace!("Frame received for unknown (dport, sport) ({}, {}), sending Rst", frame.dport, frame.sport);
+                trace!(
+                    "Frame received for unknown (dport, sport) ({}, {}), sending Rst",
+                    frame.dport,
+                    frame.sport
+                );
                 let framed_writer = self.send.write().await;
                 if let Err(error) = framed_writer
                     .send(Frame::new_reply(&frame, Flag::Rst, 0))

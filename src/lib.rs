@@ -1,16 +1,12 @@
 mod config;
 mod frame;
-mod socket;
-mod listener;
 mod inner;
+mod listener;
+mod socket;
 
 use std::{
     collections::HashMap,
-    fmt::{
-        Debug,
-        Formatter,
-        Result as FmtResult,
-    },
+    fmt::{Debug, Formatter, Result as FmtResult},
     io,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -26,7 +22,7 @@ use tokio::{
     sync::{mpsc, watch, RwLock},
 };
 use tokio_util::codec::{FramedRead, FramedWrite};
-use tracing::{trace};
+use tracing::trace;
 
 pub use config::Config;
 use frame::{FrameDecoder, FrameEncoder};

@@ -4,9 +4,9 @@ use tokio::{
     time::{sleep, Duration},
 };
 
-use tracing_subscriber::filter::{EnvFilter};
+use tracing_subscriber::filter::EnvFilter;
 
-use super::{StreamMultiplexor, Config};
+use super::{Config, StreamMultiplexor};
 
 #[ctor::ctor]
 fn init_tests() {
@@ -17,8 +17,7 @@ fn init_tests() {
             EnvFilter::default()
         }
     };
-    filter = filter
-        .add_directive("tokio_stream_multiplexor=trace".parse().unwrap());
+    filter = filter.add_directive("tokio_stream_multiplexor=trace".parse().unwrap());
 
     tracing_subscriber::fmt::Subscriber::builder()
         .without_time()

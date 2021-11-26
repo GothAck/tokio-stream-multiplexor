@@ -1,9 +1,5 @@
 use std::{
-    fmt::{
-        Debug,
-        Formatter,
-        Result as FmtResult,
-    },
+    fmt::{Debug, Formatter, Result as FmtResult},
     io,
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -98,11 +94,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
             .send
             .write()
             .await
-            .send(Frame::new_init(
-                self.sport,
-                self.dport,
-                Flag::Syn,
-            ))
+            .send(Frame::new_init(self.sport, self.dport, Flag::Syn))
             .await
         {
             error!("Error {:?} sending Syn", error);
@@ -174,8 +166,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
         }
         trace!("Drop write_half");
         *self.write_half.write().await = None;
-        self
-            .inner
+        self.inner
             .port_connections
             .write()
             .await
