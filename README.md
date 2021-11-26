@@ -1,4 +1,5 @@
 [![Build Status](https://app.travis-ci.com/GothAck/tokio-stream-multiplexor.svg?branch=master)](https://app.travis-ci.com/GothAck/tokio-stream-multiplexor)
+[![Rust](https://github.com/GothAck/tokio-stream-multiplexor/actions/workflows/rust.yml/badge.svg)](https://github.com/GothAck/tokio-stream-multiplexor/actions/workflows/rust.yml)
 ![Crates.io](https://img.shields.io/crates/v/tokio-stream-multiplexor)
 ![Crates.io](https://img.shields.io/crates/l/tokio-stream-multiplexor)
 ![docs.rs](https://img.shields.io/docsrs/tokio-stream-multiplexor)
