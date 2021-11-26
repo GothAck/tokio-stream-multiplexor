@@ -1,0 +1,27 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v2.3.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: https://github.com/doublify/pre-commit-rust
+    rev: v1.0
+    hooks:
+      - id: fmt
+      - id: cargo-check
+      - id: clippy
+  - repo: local
+    hooks:
+      - id: tests
+        name: tests
+        entry: cargo test
+        language: system
+        pass_filenames: false
+        types: [rust]
+      - id: sync-readme
+        name: sync-readme
+        entry: cargo sync-readme
+        language: system
+        pass_filenames: false
+        types: [rust, markdown]

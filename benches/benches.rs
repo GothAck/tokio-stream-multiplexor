@@ -1,4 +1,4 @@
-use tokio_stream_multiplexor::{StreamMultiplexorConfig, DuplexStream, StreamMultiplexor};
+use tokio_stream_multiplexor::{DuplexStream, StreamMultiplexor, StreamMultiplexorConfig};
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use std::sync::Arc;

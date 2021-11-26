@@ -3,9 +3,16 @@
 ![Crates.io](https://img.shields.io/crates/l/tokio-stream-multiplexor)
 ![docs.rs](https://img.shields.io/docsrs/tokio-stream-multiplexor)
 
+<!-- cargo-sync-readme start -->
+
 # Tokio Stream Multiplexor
 
 TL;DR: Multiplex multiple streams over a single stream. Has a TcpListener / TcpSocket style interface, and uses u16 ports similar to TCP itself.
+
+```toml
+[dependencies]
+foo = "1.2.3"
+```
 
 ## Why?
 
@@ -20,7 +27,7 @@ Doesn't this whole protocol in a protocol thing hurt perf?
 
 Sure, but take a look at the benches:
 
-```
+```rust
 throughput/tcp          time:   [28.968 ms 30.460 ms 31.744 ms]
                         thrpt:  [7.8755 GiB/s 8.2076 GiB/s 8.6303 GiB/s]
 
@@ -29,3 +36,5 @@ throughput/mux          time:   [122.24 ms 135.96 ms 158.80 ms]
 ```
 
 Approximately 4.5 times slower than TCP, but still able to shovel 1.8 GiB/s of shite... Seems alright to me. (Numbers could possibly be improved with some tuning of the config params too.)
+
+<!-- cargo-sync-readme end -->
