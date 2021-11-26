@@ -14,7 +14,7 @@ use tokio::{
     io::{duplex, split, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadHalf, WriteHalf},
     sync::{mpsc, watch, RwLock},
 };
-use tracing::{error, trace};
+use tracing::{error, info, trace};
 
 use crate::{
     frame::{Flag, Frame},
@@ -54,7 +54,7 @@ impl<T> Debug for MuxSocket<T> {
 
 impl<T> Drop for MuxSocket<T> {
     fn drop(&mut self) {
-        trace!("drop {:?}", self);
+        error!("drop {:?}", self);
     }
 }
 
@@ -120,12 +120,18 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
     async fn stream_read(self: Arc<Self>, read_half: ReadHalf<DuplexStream>) {
         trace!("");
         let mut rst = self.rst.subscribe();
+        let mut connected = self.inner.watch_connected_send.subscribe();
         let mut read_half = read_half;
         let mut buf: Vec<u8> = vec![];
         buf.resize(self.inner.config.buf_size, 0);
         loop {
+            info!("stream_read loop");
             if *rst.borrow() {
                 trace!("Rst is true");
+                break;
+            }
+            if !*connected.borrow() {
+                trace!("Connected is false");
                 break;
             }
             let bytes = tokio::select! {
@@ -140,6 +146,10 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
                 }
                 _ = rst.changed() => {
                     trace!("Rst changed");
+                    continue;
+                }
+                _ = connected.changed() => {
+                    trace!("Connected changed");
                     continue;
                 }
             };

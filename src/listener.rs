@@ -7,7 +7,7 @@ use std::{
 extern crate async_channel;
 pub use tokio::io::DuplexStream;
 use tokio::io::{AsyncRead, AsyncWrite};
-use tracing::trace;
+use tracing::{error, trace};
 
 use crate::{inner::StreamMultiplexorInner, Result};
 
@@ -39,7 +39,7 @@ impl<T> Debug for MuxListener<T> {
 
 impl<T> Drop for MuxListener<T> {
     fn drop(&mut self) {
-        trace!("drop {:?}", self);
+        error!("drop {:?}", self);
     }
 }
 

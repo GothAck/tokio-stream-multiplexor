@@ -6,9 +6,10 @@ use std::sync::{
 use tokio::{
     io::{duplex, AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::mpsc,
     time::{sleep, Duration},
 };
-use tracing::trace;
+use tracing::{info, trace};
 use tracing_subscriber::filter::EnvFilter;
 
 use crate::{StreamMultiplexor, StreamMultiplexorConfig};
@@ -132,6 +133,8 @@ async fn connected_stream_passes_data() {
             assert!(matches!(res, Ok(..)));
             i += 1024;
         }
+        sleep(Duration::from_millis(1)).await;
+        info!("Done send");
     });
 
     let mut output_bytes: Vec<u8> = vec![];
@@ -140,10 +143,13 @@ async fn connected_stream_passes_data() {
     while output_bytes.len() < len {
         let mut buf = [0u8; 2048];
         let bytes = conn.read(&mut buf).await.unwrap();
+        if bytes == 0 {
+            break;
+        }
         output_bytes.extend_from_slice(&buf[..bytes]);
     }
 
-    assert_eq!(input_bytes, output_bytes);
+    assert!(input_bytes == output_bytes);
 }
 
 #[tokio::test]
@@ -189,6 +195,99 @@ async fn wrapped_stream_disconnect_listener() {
     sleep(Duration::from_millis(100)).await;
 
     assert!(matches!(listener.accept().await, Err(..)));
+}
+
+#[tokio::test]
+#[tracing::instrument]
+async fn wrapped_stream_disconnect_after_bind_connect_accept() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let local_addr = listener.local_addr().unwrap();
+
+    tokio::spawn(async move {
+        info!("spawn 0");
+        let (stream, _) = listener.accept().await.unwrap();
+        let sm_b = StreamMultiplexor::new_paused(
+            stream,
+            StreamMultiplexorConfig::default().with_identifier("sm_b"),
+        );
+        let listener22 = sm_b.bind(22).await.unwrap();
+        let listener23 = sm_b.bind(23).await.unwrap();
+
+        // sleep(Duration::from_millis(50)).await;
+
+        sm_b.start();
+
+        let (exit_tx, mut exit_rx) = mpsc::channel(3);
+
+        let exit_tx_clone = exit_tx.clone();
+        tokio::spawn(async move {
+            info!("spawn 1");
+            while let Ok(mut stream) = listener22.accept().await {
+                info!("accept 1");
+                stream
+                    .write_all(b"Hello, ")
+                    .await
+                    .expect("stream.write_all succeeds");
+                info!("write_all 1");
+                break;
+            }
+            exit_tx_clone.send(()).await.expect("exit_tx.send succeeds");
+        });
+
+        tokio::spawn(async move {
+            info!("spawn 2");
+            while let Ok(mut stream) = listener23.accept().await {
+                info!("accept 2");
+                stream
+                    .write_all(b"world!\n")
+                    .await
+                    .expect("stream.write_all succeeds");
+                info!("write_all 2");
+                break;
+            }
+            exit_tx.send(()).await.expect("exit_tx.send succeeds");
+        });
+
+        exit_rx.recv().await;
+        exit_rx.recv().await;
+    });
+
+    let stream = TcpStream::connect(local_addr).await.unwrap();
+    let sm_a = StreamMultiplexor::new(
+        stream,
+        StreamMultiplexorConfig::default().with_identifier("sm_a"),
+    );
+
+    let watch_connected = sm_a.watch_connected();
+
+    let mut buf = [0u8; 16];
+
+    let bytes = sm_a
+        .connect(22)
+        .await
+        .expect("connect succeeds")
+        .read(&mut buf)
+        .await
+        .expect("stream.recv succeeds");
+    print!(
+        "{}",
+        std::str::from_utf8(&buf[0..bytes]).expect("utf8 decodes")
+    );
+    let bytes = sm_a
+        .connect(23)
+        .await
+        .expect("connect succeeds")
+        .read(&mut buf)
+        .await
+        .expect("stream.recv succeeds");
+    print!(
+        "{}",
+        std::str::from_utf8(&buf[0..bytes]).expect("utf8 decodes")
+    );
+
+    sleep(Duration::from_millis(100)).await;
+
+    assert_eq!(*watch_connected.borrow(), false);
 }
 
 #[tokio::test]

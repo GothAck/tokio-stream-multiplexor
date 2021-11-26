@@ -48,7 +48,8 @@ impl<T> Debug for StreamMultiplexorInner<T> {
 
 impl<T> Drop for StreamMultiplexorInner<T> {
     fn drop(&mut self) {
-        trace!("drop {:?}", self);
+        self.watch_connected_send.send_replace(false);
+        error!("drop {:?}", self);
     }
 }
 
@@ -62,6 +63,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
         trace!("");
 
         let mut running = self.running.subscribe();
+        let mut connected = self.watch_connected_send.subscribe();
         while !*running.borrow() {
             if let Err(error) = running.changed().await {
                 error!("Error {:?} receiving running state", error);
@@ -69,15 +71,28 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
         }
 
         loop {
-            let frame = match recv.recv().await {
-                Some(v) => v,
-                error => {
-                    error!("Error {:?} reading from stream", error);
-                    break;
+            if !*connected.borrow() {
+                trace!("Running false");
+                break;
+            }
+            let frame = tokio::select! {
+                res = recv.recv() => {
+                    if let Some(value) = res {
+                        value
+                    } else {
+                        error!("Error {:?} reading from stream", res);
+                        self.watch_connected_send.send_replace(false);
+                        break;
+                    }
+                }
+                _ = connected.changed() => {
+                    trace!("Connected changed");
+                    continue;
                 }
             };
             if let Err(error) = framed_writer.send(frame).await {
                 error!("Error {:?} reading from stream", error);
+                self.watch_connected_send.send_replace(false);
                 break;
             }
         }
@@ -91,6 +106,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
         trace!("");
 
         let mut running = self.running.subscribe();
+        let mut connected = self.watch_connected_send.subscribe();
         while !*running.borrow() {
             if let Err(error) = running.changed().await {
                 error!("Error {:?} receiving running state", error);
@@ -98,34 +114,23 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
         }
 
         loop {
-            let frame: Frame = match framed_reader.next().await {
-                Some(Ok(v)) => v,
-                error => {
-                    error!("Error {:?} reading from framed_reader", error);
-
-                    self.watch_connected_send.send_replace(false);
-                    self.connected.store(false, Ordering::Relaxed);
-
-                    for (_, connection) in self.port_connections.write().await.drain() {
-                        trace!("Send rst to {:?}", connection);
-                        if connection.rst.send(true).is_err() {
-                            error!("Error sending rst to connection {:?}", connection);
-                        }
-                        if let Some(sender) =
-                            connection.external_stream_sender.write().await.as_ref()
-                        {
-                            trace!("Send Error to {:?} external_stream_reader", connection);
-                            if let Err(error) = sender
-                                .send(Err(io::Error::from(io::ErrorKind::BrokenPipe)))
-                                .await
-                            {
-                                error!("Error {:?} dropping port_connections", error);
-                            }
-                        }
+            if !*connected.borrow() {
+                trace!("Running false");
+                break;
+            }
+            let frame: Frame = tokio::select! {
+                res = framed_reader.next() => {
+                    if let Some(Ok(value)) = res {
+                        value
+                    } else {
+                        error!("Error {:?} reading from framed_reader", res);
+                        self.watch_connected_send.send_replace(false);
+                        break;
                     }
-                    self.port_listeners.write().await.clear();
-
-                    break;
+                }
+                _ = connected.changed() => {
+                    trace!("Connected changed");
+                    continue;
                 }
             };
             if matches!(frame.flag, Flag::Syn)
@@ -161,5 +166,38 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
                 }
             }
         }
+    }
+
+    #[tracing::instrument]
+    pub async fn handle_disconnected(
+        self: Arc<Self>,
+        mut watch_connected_recv: watch::Receiver<bool>,
+    ) {
+        if *watch_connected_recv.borrow() {
+            while watch_connected_recv.changed().await.is_ok() {
+                if !*watch_connected_recv.borrow() {
+                    break;
+                }
+            }
+        }
+
+        self.connected.store(false, Ordering::Relaxed);
+
+        for (_, connection) in self.port_connections.write().await.drain() {
+            trace!("Send rst to {:?}", connection);
+            if connection.rst.send(true).is_err() {
+                error!("Error sending rst to connection {:?}", connection);
+            }
+            if let Some(sender) = connection.external_stream_sender.write().await.as_ref() {
+                trace!("Send Error to {:?} external_stream_reader", connection);
+                if let Err(error) = sender
+                    .send(Err(io::Error::from(io::ErrorKind::BrokenPipe)))
+                    .await
+                {
+                    error!("Error {:?} dropping port_connections", error);
+                }
+            }
+        }
+        self.port_listeners.write().await.clear();
     }
 }

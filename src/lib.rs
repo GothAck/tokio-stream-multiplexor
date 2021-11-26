@@ -83,7 +83,8 @@ impl<T> Debug for StreamMultiplexor<T> {
 
 impl<T> Drop for StreamMultiplexor<T> {
     fn drop(&mut self) {
-        trace!("drop {:?}", self);
+        self.inner.watch_connected_send.send_replace(false);
+        error!("drop {:?}", self);
     }
 }
 
@@ -109,7 +110,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
         let framed_reader = FramedRead::new(reader, FrameDecoder::new(config));
         let framed_writer = FramedWrite::new(writer, FrameEncoder::new(config));
         let (send, recv) = mpsc::channel(config.max_queued_frames);
-        let (watch_connected_send, _) = watch::channel(true);
+        let (watch_connected_send, watch_connected_recv) = watch::channel(true);
         let (running, _) = watch::channel(running);
         let inner = Arc::from(StreamMultiplexorInner {
             config,
@@ -123,6 +124,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
 
         tokio::spawn(inner.clone().framed_writer_sender(recv, framed_writer));
         tokio::spawn(inner.clone().framed_reader_sender(framed_reader));
+        tokio::spawn(inner.clone().handle_disconnected(watch_connected_recv));
 
         Self { inner }
     }
@@ -132,9 +134,13 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
     /// Only effective on a paused `StreamMultiplexor<T>`.
     /// See `new_paused(inner: T, config: StreamMultiplexorConfig)`.
     pub fn start(&self) {
-        if let Err(error) = self.inner.running.send(true) {
-            error!("Error {:?} setting running to true", error);
-        }
+        self.inner.running.send_replace(true);
+    }
+
+    /// Shut down the StreamMultiplexor<T> instance and drop reference
+    /// to the inner stream to close it.
+    pub fn close(&self) {
+        self.inner.watch_connected_send.send_replace(false);
     }
 
     /// Bind to port and return a `MuxListener<T>`.
