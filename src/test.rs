@@ -1,9 +1,14 @@
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+
 use tokio::{
     io::{duplex, AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
     time::{sleep, Duration},
 };
-
+use tracing::trace;
 use tracing_subscriber::filter::EnvFilter;
 
 use super::{Config, StreamMultiplexor};
@@ -295,4 +300,52 @@ async fn listen_multiple_accept() {
 
     assert_eq!(input_bytes, output_bytes0);
     assert_eq!(input_bytes, output_bytes1);
+}
+
+#[tokio::test]
+#[tracing::instrument]
+async fn test_start_paused() {
+    let (a, b) = duplex(10);
+
+    let sm_a = StreamMultiplexor::new(a, Config::default().with_identifier("sm_a"));
+    let sm_b = Arc::from(StreamMultiplexor::new_paused(b, Config::default().with_identifier("sm_b")));
+
+    let bound = Arc::from(AtomicBool::new(false));
+    let accepted = Arc::from(AtomicBool::new(false));
+    let connected = Arc::from(AtomicBool::new(false));
+
+    let sm_b_clone = sm_b.clone();
+    let bound_clone = bound.clone();
+    let accepted_clone = accepted.clone();
+    tokio::spawn(async move {
+        trace!("bind");
+        let listener = sm_b_clone.bind(22).await.unwrap();
+        bound_clone.store(true, Ordering::Relaxed);
+        trace!("accept");
+        let _ = listener.accept().await;
+        accepted_clone.store(true, Ordering::Relaxed);
+        trace!("accepted")
+    });
+
+    let connected_clone = connected.clone();
+    tokio::spawn(async move {
+        trace!("connect");
+        assert!(matches!(sm_a.connect(22).await, Ok(_)));
+        connected_clone.store(true, Ordering::Relaxed);
+        trace!("connected");
+    });
+
+    sleep(Duration::from_millis(250)).await;
+
+    assert!(bound.load(Ordering::Relaxed));
+    assert!(!accepted.load(Ordering::Relaxed));
+    assert!(!connected.load(Ordering::Relaxed));
+
+    sm_b.start();
+
+    sleep(Duration::from_millis(5)).await;
+
+    assert!(bound.load(Ordering::Relaxed));
+    assert!(accepted.load(Ordering::Relaxed));
+    assert!(connected.load(Ordering::Relaxed));
 }

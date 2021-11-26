@@ -34,6 +34,7 @@ pub(crate) struct StreamMultiplexorInner<T> {
     pub port_listeners: RwLock<HashMap<u16, async_channel::Sender<DuplexStream>>>,
     pub watch_connected_send: watch::Sender<bool>,
     pub send: RwLock<mpsc::Sender<Frame>>,
+    pub running: watch::Sender<bool>,
 }
 
 impl<T> Debug for StreamMultiplexorInner<T> {
@@ -59,6 +60,14 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
         mut framed_writer: FramedWrite<WriteHalf<T>, FrameEncoder>,
     ) {
         trace!("");
+
+        let mut running = self.running.subscribe();
+        while !*running.borrow() {
+            if let Err(error) = running.changed().await {
+                error!("Error {:?} receiving running state", error);
+            }
+        }
+
         loop {
             let frame = match recv.recv().await {
                 Some(v) => v,
@@ -80,6 +89,14 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
         mut framed_reader: FramedRead<ReadHalf<T>, FrameDecoder>,
     ) {
         trace!("");
+
+        let mut running = self.running.subscribe();
+        while !*running.borrow() {
+            if let Err(error) = running.changed().await {
+                error!("Error {:?} receiving running state", error);
+            }
+        }
+
         loop {
             let frame: Frame = match framed_reader.next().await {
                 Some(Ok(v)) => v,

@@ -22,7 +22,7 @@ use tokio::{
     sync::{mpsc, watch, RwLock},
 };
 use tokio_util::codec::{FramedRead, FramedWrite};
-use tracing::trace;
+use tracing::{error, trace};
 
 pub use config::Config;
 use frame::{FrameDecoder, FrameEncoder};
@@ -52,14 +52,29 @@ impl<T> Drop for StreamMultiplexor<T> {
 }
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
-    /// Constructs a new StreamMultiplexor<T>
+    /// Constructs a new `StreamMultiplexor<T>`
     pub fn new(inner: T, config: Config) -> Self {
+        Self::new_running(inner, config, true)
+    }
+
+    /// Constructs a new paused `StreamMultiplexor<T>`
+    ///
+    /// This allows you to bind and listen on a bunch of ports before
+    /// processing any packets from the inner stream, removing race conditions
+    /// between bind and connect. Call `start()` to start processing the
+    /// inner stream.
+    pub fn new_paused(inner: T, config: Config) -> Self {
+        Self::new_running(inner, config, false)
+    }
+
+    fn new_running(inner: T, config: Config, running: bool) -> Self {
         let (reader, writer) = split(inner);
 
         let framed_reader = FramedRead::new(reader, FrameDecoder::new(config));
         let framed_writer = FramedWrite::new(writer, FrameEncoder::new(config));
         let (send, recv) = mpsc::channel(10);
         let (watch_connected_send, _) = watch::channel(true);
+        let (running, _) = watch::channel(running);
         let inner = Arc::from(StreamMultiplexorInner {
             config,
             connected: AtomicBool::from(true),
@@ -67,12 +82,23 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             port_listeners: RwLock::from(HashMap::new()),
             watch_connected_send,
             send: RwLock::from(send),
+            running,
         });
 
         tokio::spawn(inner.clone().framed_writer_sender(recv, framed_writer));
         tokio::spawn(inner.clone().framed_reader_sender(framed_reader));
 
         Self { inner }
+    }
+
+    /// Start processing the inner stream.
+    ///
+    /// Only effective on a paused `StreamMultiplexor<T>`.
+    /// See `new_paused(inner: T, config: Config)`.
+    pub fn start(&self) {
+        if let Err(error) = self.inner.running.send(true) {
+            error!("Error {:?} setting running to true", error);
+        }
     }
 
     /// Bind to port and return a `MuxListener<T>`
