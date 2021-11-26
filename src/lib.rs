@@ -69,7 +69,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             connected: AtomicBool::from(true),
             port_connections: RwLock::from(HashMap::new()),
             port_listeners: RwLock::from(HashMap::new()),
-            watch_connected_send: watch_connected_send,
+            watch_connected_send,
             send: RwLock::from(send),
         });
 
@@ -133,7 +133,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
 
         rx.recv()
             .await
-            .ok_or(io::Error::from(io::ErrorKind::Other))?
+            .ok_or_else(|| io::Error::from(io::ErrorKind::Other))?
     }
 
     #[tracing::instrument]

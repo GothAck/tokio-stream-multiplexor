@@ -65,16 +65,6 @@ impl Frame {
             data: Bytes::copy_from_slice(data),
         }
     }
-
-    pub fn new_rst(sport: u16, dport: u16, seq: u32) -> Self {
-        Self {
-            sport,
-            dport,
-            flag: Flag::Rst,
-            seq,
-            data: Bytes::new(),
-        }
-    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

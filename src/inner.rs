@@ -95,7 +95,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexorInner<
 
                     for (_, connection) in self.port_connections.write().await.drain() {
                         trace!("Send rst to {:?}", connection);
-                        if let Err(_) = connection.rst.send(true) {
+                        if connection.rst.send(true).is_err() {
                             error!("Error sending rst to connection {:?}", connection);
                         }
                         if let Some(sender) = connection.external_stream_sender.write().await.as_ref() {

@@ -58,6 +58,6 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxListener<T> {
     #[tracing::instrument]
     pub async fn accept(&self) -> Result<DuplexStream> {
         trace!("");
-        Ok(self.recv.recv().await.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?)
+        self.recv.recv().await.map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
 }
