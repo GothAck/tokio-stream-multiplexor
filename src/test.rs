@@ -11,7 +11,7 @@ use tokio::{
 use tracing::trace;
 use tracing_subscriber::filter::EnvFilter;
 
-use super::{Config, StreamMultiplexor};
+use crate::{StreamMultiplexorConfig, StreamMultiplexor};
 
 #[ctor::ctor]
 fn init_tests() {
@@ -36,8 +36,8 @@ fn init_tests() {
 async fn connect_no_listen_fails() {
     let (a, b) = duplex(10);
 
-    let sm_a = StreamMultiplexor::new(a, Config::default().with_identifier("sm_a"));
-    let _sm_b = StreamMultiplexor::new(b, Config::default().with_identifier("sm_b"));
+    let sm_a = StreamMultiplexor::new(a, StreamMultiplexorConfig::default().with_identifier("sm_a"));
+    let _sm_b = StreamMultiplexor::new(b, StreamMultiplexorConfig::default().with_identifier("sm_b"));
 
     assert!(matches!(sm_a.connect(22).await, Err(_)));
 }
@@ -47,8 +47,8 @@ async fn connect_no_listen_fails() {
 async fn connect_listen_succeeds() {
     let (a, b) = duplex(10);
 
-    let sm_a = StreamMultiplexor::new(a, Config::default().with_identifier("sm_a"));
-    let sm_b = StreamMultiplexor::new(b, Config::default().with_identifier("sm_b"));
+    let sm_a = StreamMultiplexor::new(a, StreamMultiplexorConfig::default().with_identifier("sm_a"));
+    let sm_b = StreamMultiplexor::new(b, StreamMultiplexorConfig::default().with_identifier("sm_b"));
 
     tokio::spawn(async move {
         let _connection = sm_b.bind(22).await.unwrap().accept().await;
@@ -63,8 +63,8 @@ async fn connect_listen_succeeds() {
 async fn dropped_connection_rsts() {
     let (a, b) = duplex(10);
 
-    let sm_a = StreamMultiplexor::new(a, Config::default().with_identifier("sm_a"));
-    let sm_b = StreamMultiplexor::new(b, Config::default().with_identifier("sm_b"));
+    let sm_a = StreamMultiplexor::new(a, StreamMultiplexorConfig::default().with_identifier("sm_a"));
+    let sm_b = StreamMultiplexor::new(b, StreamMultiplexorConfig::default().with_identifier("sm_b"));
 
     let listener = sm_b.bind(22).await.unwrap();
     tokio::spawn(async move {
@@ -86,8 +86,8 @@ async fn connected_stream_passes_data() {
     let input_bytes: Vec<u8> = (0..(1024 * 1024)).map(|_| rand::random::<u8>()).collect();
     let len = input_bytes.len();
 
-    let sm_a = StreamMultiplexor::new(a, Config::default().with_identifier("sm_a"));
-    let sm_b = StreamMultiplexor::new(b, Config::default().with_identifier("sm_b"));
+    let sm_a = StreamMultiplexor::new(a, StreamMultiplexorConfig::default().with_identifier("sm_a"));
+    let sm_b = StreamMultiplexor::new(b, StreamMultiplexorConfig::default().with_identifier("sm_b"));
 
     let input_bytes_clone = input_bytes.clone();
     tokio::spawn(async move {
@@ -124,7 +124,7 @@ async fn wrapped_stream_disconnect() {
 
     let stream = TcpStream::connect(local_addr).await.unwrap();
 
-    let sm_a = StreamMultiplexor::new(stream, Config::default().with_identifier("sm_a"));
+    let sm_a = StreamMultiplexor::new(stream, StreamMultiplexorConfig::default().with_identifier("sm_a"));
     sleep(Duration::from_millis(100)).await;
 
     assert!(matches!(sm_a.connect(1024).await, Err(..)));
@@ -143,7 +143,7 @@ async fn wrapped_stream_disconnect_listener() {
     });
 
     let stream = TcpStream::connect(local_addr).await.unwrap();
-    let sm_a = StreamMultiplexor::new(stream, Config::default().with_identifier("sm_a"));
+    let sm_a = StreamMultiplexor::new(stream, StreamMultiplexorConfig::default().with_identifier("sm_a"));
     let listener = sm_a.bind(1024).await.unwrap();
 
     sleep(Duration::from_millis(100)).await;
@@ -163,7 +163,7 @@ async fn wrapped_stream_disconnect_subscribe_before() {
     });
 
     let stream = TcpStream::connect(local_addr).await.unwrap();
-    let sm_a = StreamMultiplexor::new(stream, Config::default().with_identifier("sm_a"));
+    let sm_a = StreamMultiplexor::new(stream, StreamMultiplexorConfig::default().with_identifier("sm_a"));
     let mut connected = sm_a.watch_connected();
     assert_eq!(*connected.borrow(), true);
 
@@ -188,7 +188,7 @@ async fn wrapped_stream_disconnect_subscribe_after() {
     });
 
     let stream = TcpStream::connect(local_addr).await.unwrap();
-    let sm_a = StreamMultiplexor::new(stream, Config::default().with_identifier("sm_a"));
+    let sm_a = StreamMultiplexor::new(stream, StreamMultiplexorConfig::default().with_identifier("sm_a"));
 
     let listener = sm_a.bind(1024).await.unwrap();
 
@@ -209,8 +209,8 @@ async fn listen_accept_multiple() {
     let input_bytes: Vec<u8> = (0..(1024 * 1024)).map(|_| rand::random::<u8>()).collect();
     let len = input_bytes.len();
 
-    let sm_a = StreamMultiplexor::new(a, Config::default().with_identifier("sm_a"));
-    let sm_b = StreamMultiplexor::new(b, Config::default().with_identifier("sm_b"));
+    let sm_a = StreamMultiplexor::new(a, StreamMultiplexorConfig::default().with_identifier("sm_a"));
+    let sm_b = StreamMultiplexor::new(b, StreamMultiplexorConfig::default().with_identifier("sm_b"));
 
     let input_bytes_clone = input_bytes.clone();
     tokio::spawn(async move {
@@ -254,8 +254,8 @@ async fn listen_multiple_accept() {
     let input_bytes: Vec<u8> = (0..(1024 * 1024)).map(|_| rand::random::<u8>()).collect();
     let len = input_bytes.len();
 
-    let sm_a = StreamMultiplexor::new(a, Config::default().with_identifier("sm_a"));
-    let sm_b = StreamMultiplexor::new(b, Config::default().with_identifier("sm_b"));
+    let sm_a = StreamMultiplexor::new(a, StreamMultiplexorConfig::default().with_identifier("sm_a"));
+    let sm_b = StreamMultiplexor::new(b, StreamMultiplexorConfig::default().with_identifier("sm_b"));
 
     let input_bytes_clone = input_bytes.clone();
     let listener = sm_b.bind(22).await.unwrap();
@@ -307,8 +307,8 @@ async fn listen_multiple_accept() {
 async fn test_start_paused() {
     let (a, b) = duplex(10);
 
-    let sm_a = StreamMultiplexor::new(a, Config::default().with_identifier("sm_a"));
-    let sm_b = Arc::from(StreamMultiplexor::new_paused(b, Config::default().with_identifier("sm_b")));
+    let sm_a = StreamMultiplexor::new(a, StreamMultiplexorConfig::default().with_identifier("sm_a"));
+    let sm_b = Arc::from(StreamMultiplexor::new_paused(b, StreamMultiplexorConfig::default().with_identifier("sm_b")));
 
     let bound = Arc::from(AtomicBool::new(false));
     let accepted = Arc::from(AtomicBool::new(false));

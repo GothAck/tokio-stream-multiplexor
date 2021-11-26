@@ -24,7 +24,7 @@ use tokio::{
 use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{error, trace};
 
-pub use config::Config;
+pub use config::StreamMultiplexorConfig;
 use frame::{FrameDecoder, FrameEncoder};
 use inner::StreamMultiplexorInner;
 pub use listener::MuxListener;
@@ -53,7 +53,7 @@ impl<T> Drop for StreamMultiplexor<T> {
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
     /// Constructs a new `StreamMultiplexor<T>`
-    pub fn new(inner: T, config: Config) -> Self {
+    pub fn new(inner: T, config: StreamMultiplexorConfig) -> Self {
         Self::new_running(inner, config, true)
     }
 
@@ -63,11 +63,11 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
     /// processing any packets from the inner stream, removing race conditions
     /// between bind and connect. Call `start()` to start processing the
     /// inner stream.
-    pub fn new_paused(inner: T, config: Config) -> Self {
+    pub fn new_paused(inner: T, config: StreamMultiplexorConfig) -> Self {
         Self::new_running(inner, config, false)
     }
 
-    fn new_running(inner: T, config: Config, running: bool) -> Self {
+    fn new_running(inner: T, config: StreamMultiplexorConfig, running: bool) -> Self {
         let (reader, writer) = split(inner);
 
         let framed_reader = FramedRead::new(reader, FrameDecoder::new(config));
@@ -94,7 +94,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
     /// Start processing the inner stream.
     ///
     /// Only effective on a paused `StreamMultiplexor<T>`.
-    /// See `new_paused(inner: T, config: Config)`.
+    /// See `new_paused(inner: T, config: StreamMultiplexorConfig)`.
     pub fn start(&self) {
         if let Err(error) = self.inner.running.send(true) {
             error!("Error {:?} setting running to true", error);

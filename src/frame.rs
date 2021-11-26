@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use tokio_util::codec::{Decoder, Encoder};
 use tracing::{error, trace};
 
-use super::config::Config;
+use super::config::StreamMultiplexorConfig;
 
 #[derive(Serialize, Deserialize)]
 pub struct Frame {
@@ -78,11 +78,11 @@ pub enum Flag {
 }
 
 pub struct FrameDecoder {
-    config: Config,
+    config: StreamMultiplexorConfig,
 }
 
 impl FrameDecoder {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: StreamMultiplexorConfig) -> Self {
         Self { config }
     }
 }
@@ -131,11 +131,11 @@ impl Decoder for FrameDecoder {
 }
 
 pub struct FrameEncoder {
-    config: Config,
+    config: StreamMultiplexorConfig,
 }
 
 impl FrameEncoder {
-    pub fn new(config: Config) -> Self {
+    pub fn new(config: StreamMultiplexorConfig) -> Self {
         Self { config }
     }
 }

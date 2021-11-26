@@ -1,12 +1,12 @@
 #[derive(Copy, Clone, Debug)]
-pub struct Config {
+pub struct StreamMultiplexorConfig {
     pub max_frame_size: usize,
     pub buf_size: usize,
     pub identifier: &'static str,
 }
 
-impl Default for Config {
-    /// Construct a default Config
+impl Default for StreamMultiplexorConfig {
+    /// Construct a default StreamMultiplexorConfig
     fn default() -> Self {
         Self {
             max_frame_size: 4 * 1024 * 1024,
@@ -16,7 +16,7 @@ impl Default for Config {
     }
 }
 
-impl Config {
+impl StreamMultiplexorConfig {
     /// Add identifier static &str to config
     pub fn with_identifier(mut self, identifier: &'static str) -> Self {
         self.identifier = identifier;

@@ -1,4 +1,4 @@
-use tokio_stream_multiplexor::{Config, DuplexStream, StreamMultiplexor};
+use tokio_stream_multiplexor::{StreamMultiplexorConfig, DuplexStream, StreamMultiplexor};
 
 use criterion::{criterion_group, criterion_main, Criterion, Throughput};
 use std::sync::Arc;
@@ -37,8 +37,8 @@ async fn get_mux_stream_pair() -> (
 ) {
     let (stream0, stream1) = get_tcp_stream_pair().await;
 
-    let mux0 = StreamMultiplexor::new(stream0, Config::default());
-    let mux1 = StreamMultiplexor::new(stream1, Config::default());
+    let mux0 = StreamMultiplexor::new(stream0, StreamMultiplexorConfig::default());
+    let mux1 = StreamMultiplexor::new(stream1, StreamMultiplexorConfig::default());
 
     let (tx, mut rx) = mpsc::channel(1);
     let mux1 = Arc::from(mux1);
@@ -92,8 +92,8 @@ async fn mux_throughput() {
 
 async fn mux_handshake() {
     let (stream0, stream1) = get_tcp_stream_pair().await;
-    let mux0 = StreamMultiplexor::new(stream0, Config::default());
-    let mux1 = StreamMultiplexor::new(stream1, Config::default());
+    let mux0 = StreamMultiplexor::new(stream0, StreamMultiplexorConfig::default());
+    let mux1 = StreamMultiplexor::new(stream1, StreamMultiplexorConfig::default());
 
     for i in 0..HANDSHAKE_ROUND {
         let listener = mux0.bind(i as u16 + 1).await.unwrap();

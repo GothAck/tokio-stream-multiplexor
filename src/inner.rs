@@ -20,7 +20,7 @@ use tokio_util::codec::{FramedRead, FramedWrite};
 use tracing::{error, trace};
 
 use crate::{
-    config::Config,
+    config::StreamMultiplexorConfig,
     frame::{Flag, Frame, FrameDecoder, FrameEncoder},
     socket::MuxSocket,
 };
@@ -28,7 +28,7 @@ use crate::{
 type PortPair = (u16, u16);
 
 pub(crate) struct StreamMultiplexorInner<T> {
-    pub config: Config,
+    pub config: StreamMultiplexorConfig,
     pub connected: AtomicBool,
     pub port_connections: RwLock<HashMap<PortPair, Arc<MuxSocket<T>>>>,
     pub port_listeners: RwLock<HashMap<u16, async_channel::Sender<DuplexStream>>>,
