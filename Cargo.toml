@@ -1,9 +1,10 @@
 [package]
 name = "tokio-stream-multiplexor"
-version = "0.5.3"
+version = "0.5.4"
 authors = ["Greg \"GothAck\" Miell <rust@greg.gothack.ninja>"]
 description = "Stream Multiplexor for tokio with a tcp like interface"
 repository = "https://github.com/GothAck/tokio-stream-multiplexor"
+documentation = "https://docs.rs/tokio-stream-multiplexor"
 categories = ["asynchronous", "network-programming"]
 readme = "README.md"
 license = "MIT"
