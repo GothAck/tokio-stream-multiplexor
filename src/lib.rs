@@ -3,6 +3,11 @@ mod frame;
 
 use std::{
     collections::HashMap,
+    fmt::{
+        Debug,
+        Formatter,
+        Result as FmtResult,
+    },
     io,
     sync::{
         atomic::{AtomicBool, AtomicU32, Ordering},
@@ -21,16 +26,30 @@ use tokio::{
     sync::{mpsc, watch, RwLock},
 };
 use tokio_util::codec::{FramedRead, FramedWrite};
-use tracing::error;
+use tracing::{error, trace};
 
 pub use config::Config;
 use frame::{Flag, Frame, FrameDecoder, FrameEncoder};
 
 type Result<T> = std::result::Result<T, io::Error>;
 
-#[derive(Debug)]
 pub struct StreamMultiplexor<T> {
     inner: Arc<StreamMultiplexorInner<T>>,
+}
+
+impl<T> Debug for StreamMultiplexor<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.debug_struct("StreamMultiplexor")
+            .field("id", &self.inner.config.identifier)
+            .field("inner", &self.inner)
+            .finish()
+    }
+}
+
+impl<T> Drop for StreamMultiplexor<T> {
+    fn drop(&mut self) {
+        trace!("drop {:?}", self);
+    }
 }
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
@@ -131,7 +150,9 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
     }
 
     /// Bind to port and return a `MuxListener<T>`
+    #[tracing::instrument]
     pub async fn bind(&self, port: u16) -> Result<MuxListener<T>> {
+        trace!("");
         if !self.inner.connected.load(Ordering::Relaxed) {
             return Err(io::Error::from(io::ErrorKind::ConnectionReset));
         }
@@ -140,7 +161,9 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             while port < 1024 || self.inner.port_listeners.read().await.contains_key(&port) {
                 port = rand::thread_rng().gen_range(1024u16..u16::MAX);
             }
+            trace!("port = {}", port);
         } else if self.inner.port_listeners.read().await.contains_key(&port) {
+            trace!("port_listeners already contains {}", port);
             return Err(io::Error::from(io::ErrorKind::AddrInUse));
         }
         let (send, recv) = async_channel::bounded(8);
@@ -153,8 +176,11 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
     }
 
     /// Connect to `port` on the remote end
+    #[tracing::instrument]
     pub async fn connect(&self, port: u16) -> Result<DuplexStream> {
+        trace!("");
         if !self.inner.connected.load(Ordering::Relaxed) {
+            trace!("Not connected, raise Error");
             return Err(io::Error::from(io::ErrorKind::ConnectionReset));
         }
         let mut local_port: u16 = 0;
@@ -183,7 +209,9 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
             .ok_or(io::Error::from(io::ErrorKind::Other))?
     }
 
+    #[tracing::instrument]
     pub fn watch_connected(&self) -> watch::Receiver<bool> {
+        trace!("");
         self.inner.watch_connected_send.subscribe()
     }
 }
@@ -198,7 +226,6 @@ enum PortState {
 
 type PortPair = (u16, u16);
 
-#[derive(Debug)]
 struct StreamMultiplexorInner<T> {
     config: Config,
     connected: AtomicBool,
@@ -208,21 +235,51 @@ struct StreamMultiplexorInner<T> {
     send: RwLock<mpsc::Sender<Frame>>,
 }
 
-#[derive(Debug)]
+impl<T> Debug for StreamMultiplexorInner<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.debug_struct("StreamMultiplexorInner")
+            .field("id", &self.config.identifier)
+            .field("connected", &self.connected)
+            .finish()
+    }
+}
+
+impl<T> Drop for StreamMultiplexorInner<T> {
+    fn drop(&mut self) {
+        trace!("drop {:?}", self);
+    }
+}
+
 pub struct MuxListener<T> {
     inner: Arc<StreamMultiplexorInner<T>>,
     port: u16,
     recv: async_channel::Receiver<DuplexStream>,
 }
 
+impl<T> Debug for MuxListener<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.debug_struct("MuxListener")
+            .field("id", &self.inner.config.identifier)
+            .field("port", &self.port)
+            .finish()
+    }
+}
+
+impl<T> Drop for MuxListener<T> {
+    fn drop(&mut self) {
+        trace!("drop {:?}", self);
+    }
+}
+
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxListener<T> {
     /// Accept a connection from the remote side
+    #[tracing::instrument]
     pub async fn accept(&self) -> Result<DuplexStream> {
+        trace!("");
         Ok(self.recv.recv().await.map_err(|e| io::Error::new(io::ErrorKind::Other, e))?)
     }
 }
 
-#[derive(Debug)]
 struct MuxSocket<T> {
     inner: Arc<StreamMultiplexorInner<T>>,
     accepting: bool,
@@ -232,6 +289,22 @@ struct MuxSocket<T> {
     seq: AtomicU32,
     write_half: RwLock<Option<WriteHalf<DuplexStream>>>,
     external_stream_sender: RwLock<Option<mpsc::Sender<Result<DuplexStream>>>>,
+}
+
+impl<T> Debug for MuxSocket<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> FmtResult {
+        f.debug_struct("MuxSocket")
+            .field("id", &self.inner.config.identifier)
+            .field("local_port", &self.local_port)
+            .field("remote_port", &self.remote_port)
+            .finish()
+    }
+}
+
+impl<T> Drop for MuxSocket<T> {
+    fn drop(&mut self) {
+        trace!("drop {:?}", self);
+    }
 }
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
@@ -254,12 +327,15 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
     }
 
     pub async fn stream(self: &Arc<Self>) -> mpsc::Receiver<Result<DuplexStream>> {
+        trace!("");
         let (sender, receiver) = mpsc::channel(1);
         *self.external_stream_sender.write().await = Some(sender);
         receiver
     }
 
+    #[tracing::instrument]
     pub async fn start(self: &Arc<Self>) {
+        trace!("");
         if let Err(error) = self
             .inner
             .send
@@ -277,7 +353,9 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
         *self.state.write().await = PortState::Ack;
     }
 
+    #[tracing::instrument]
     async fn spawn_stream(self: &Arc<Self>) -> DuplexStream {
+        trace!("");
         let (s1, s2) = duplex(self.inner.config.max_frame_size);
 
         let (read_half, write_half) = split(s2);
@@ -342,11 +420,14 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
         s1
     }
 
+    #[tracing::instrument]
     pub async fn recv_frame(self: &Arc<Self>, frame: Frame) {
+        trace!("");
         let state: PortState = *self.state.read().await;
         match frame.flag {
             Flag::Syn => {
                 if let PortState::Closed = state {
+                    trace!("{:?} {:?}", frame.flag, state);
                     if let Err(error) = self
                         .inner
                         .send
@@ -366,6 +447,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
             }
             Flag::SynAck | Flag::Ack => match state {
                 PortState::SynAck | PortState::Ack => {
+                    trace!("{:?} {:?}", frame.flag, state);
                     if let Err(error) = self
                         .inner
                         .send
@@ -402,6 +484,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
             },
             Flag::Unset => {
                 if let PortState::Open = state {
+                    trace!("{:?} {:?}", frame.flag, state);
                     if let Some(write_half) = self.write_half.write().await.as_mut() {
                         if let Err(error) = write_half.write_all(&frame.data).await {
                             error!("Error {:?} writing data to write_half", error);
@@ -411,6 +494,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
             }
             Flag::Fin => {
                 if let PortState::Open = state {
+                    trace!("{:?} {:?}", frame.flag, state);
                     if let Err(error) = self
                         .inner
                         .send
@@ -431,6 +515,7 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxSocket<T> {
             }
             Flag::Rst => {
                 if matches!(state, PortState::Closed | PortState::Ack) {
+                    trace!("{:?} {:?}", frame.flag, state);
                     if let Some(stream_sender) = self.external_stream_sender.write().await.as_ref()
                     {
                         if let Err(error) = stream_sender
