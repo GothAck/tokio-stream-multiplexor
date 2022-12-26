@@ -58,4 +58,9 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxListener<T> {
             .await
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
     }
+
+    /// Get the port number of this listener
+    pub fn port(&self) -> u16 {
+        self.port
+    }
 }
