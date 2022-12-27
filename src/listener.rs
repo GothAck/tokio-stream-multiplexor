@@ -12,6 +12,10 @@ use tracing::{error, trace};
 use crate::{inner::StreamMultiplexorInner, Result};
 
 /// Listener struct returned by `StreamMultiplexor<T>::bind()`
+///
+/// # Drop
+/// When the listener is dropped, it will free the port for reuse, but established
+/// connections will not be closed.
 pub struct MuxListener<T> {
     inner: Arc<StreamMultiplexorInner<T>>,
     port: u16,
@@ -39,7 +43,8 @@ impl<T> Debug for MuxListener<T> {
 
 impl<T> Drop for MuxListener<T> {
     fn drop(&mut self) {
-        error!("drop {:?}", self);
+        self.inner.may_close_listeners.send(self.port).ok();
+        debug!("drop {:?}", self);
     }
 }
 
@@ -52,5 +57,10 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> MuxListener<T> {
             .recv()
             .await
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))
+    }
+
+    /// Get the port number of this listener
+    pub fn port(&self) -> u16 {
+        self.port
     }
 }

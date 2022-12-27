@@ -68,6 +68,11 @@ use socket::MuxSocket;
 pub type Result<T> = std::result::Result<T, io::Error>;
 
 /// The Stream Multiplexor.
+///
+/// # Drop
+/// When the `StreamMultiplexor` is dropped, it will send RST to all open
+/// connections and listeners.
+#[derive(Clone)]
 pub struct StreamMultiplexor<T> {
     inner: Arc<StreamMultiplexorInner<T>>,
 }
@@ -83,8 +88,24 @@ impl<T> Debug for StreamMultiplexor<T> {
 
 impl<T> Drop for StreamMultiplexor<T> {
     fn drop(&mut self) {
+        self.close();
+        debug!("drop {:?}", self);
+    }
+}
+
+impl<T> StreamMultiplexor<T> {
+    /// Start processing the inner stream.
+    ///
+    /// Only effective on a paused `StreamMultiplexor<T>`.
+    /// See `new_paused(inner: T, config: StreamMultiplexorConfig)`.
+    pub fn start(&self) {
+        self.inner.running.send_replace(true);
+    }
+
+    /// Shut down the StreamMultiplexor<T> instance and drop reference
+    /// to the inner stream to close it.
+    pub fn close(&self) {
         self.inner.watch_connected_send.send_replace(false);
-        error!("drop {:?}", self);
     }
 }
 
@@ -112,35 +133,29 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> StreamMultiplexor<T> {
         let (send, recv) = mpsc::channel(config.max_queued_frames);
         let (watch_connected_send, watch_connected_recv) = watch::channel(true);
         let (running, _) = watch::channel(running);
+        let (may_close_listeners_send, may_close_listeners_recv) = mpsc::unbounded_channel();
+        let (may_close_connections_send, may_close_connections_recv) = mpsc::unbounded_channel();
         let inner = Arc::from(StreamMultiplexorInner {
             config,
             connected: AtomicBool::from(true),
             port_connections: RwLock::from(HashMap::new()),
             port_listeners: RwLock::from(HashMap::new()),
             watch_connected_send,
+            may_close_listeners: may_close_listeners_send,
+            may_close_connections: may_close_connections_send,
             send: RwLock::from(send),
             running,
         });
 
         tokio::spawn(inner.clone().framed_writer_sender(recv, framed_writer));
         tokio::spawn(inner.clone().framed_reader_sender(framed_reader));
-        tokio::spawn(inner.clone().handle_disconnected(watch_connected_recv));
+        tokio::spawn(inner.clone().handle_mux_state_change(
+            watch_connected_recv,
+            may_close_listeners_recv,
+            may_close_connections_recv,
+        ));
 
         Self { inner }
-    }
-
-    /// Start processing the inner stream.
-    ///
-    /// Only effective on a paused `StreamMultiplexor<T>`.
-    /// See `new_paused(inner: T, config: StreamMultiplexorConfig)`.
-    pub fn start(&self) {
-        self.inner.running.send_replace(true);
-    }
-
-    /// Shut down the StreamMultiplexor<T> instance and drop reference
-    /// to the inner stream to close it.
-    pub fn close(&self) {
-        self.inner.watch_connected_send.send_replace(false);
     }
 
     /// Bind to port and return a `MuxListener<T>`.

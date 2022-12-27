@@ -54,7 +54,11 @@ impl<T> Debug for MuxSocket<T> {
 
 impl<T> Drop for MuxSocket<T> {
     fn drop(&mut self) {
-        error!("drop {:?}", self);
+        self.inner
+            .may_close_connections
+            .send((self.sport, self.dport))
+            .ok();
+        debug!("drop {:?}", self);
     }
 }
 
